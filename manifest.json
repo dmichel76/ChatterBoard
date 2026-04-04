@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "ChatterBoard MVP",
+  "version": "0.1.0",
+  "description": "Gives Azure DevOps tickets a voice.",
+  "permissions": ["storage", "activeTab", "scripting", "tts"],
+  "host_permissions": [
+    "https://dev.azure.com/*",
+    "https://*.visualstudio.com/*",
+    "https://api.elevenlabs.io/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ChatterBoard"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://dev.azure.com/*",
+        "https://*.visualstudio.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

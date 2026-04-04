@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ChatterBoard Options</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    h1 { margin-bottom: 16px; }
+    label { display: block; margin-top: 14px; font-weight: bold; }
+    input { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 10px; }
+    button { margin-top: 20px; padding: 10px 16px; cursor: pointer; }
+    .hint { color: #555; font-size: 12px; }
+    .status { margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>ChatterBoard Options</h1>
+
+  <label for="adoPat">Azure DevOps PAT</label>
+  <input id="adoPat" type="password" placeholder="Personal Access Token" />
+  <div class="hint">Minimum scope for MVP: Work Items (Read).</div>
+
+  <button id="saveButton">Save</button>
+  <div id="status" class="status"></div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
