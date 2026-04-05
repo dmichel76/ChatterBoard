@@ -1,4 +1,10 @@
 const FLASH_CLASS = 'chatterboard-flash';
+const SNAPSHOT_TTL_MS = 400;
+
+let snapshotCache = {
+  value: null,
+  createdAt: 0
+};
 
 (function injectStyles() {
   const style = document.createElement('style');
@@ -31,46 +37,40 @@ const FLASH_CLASS = 'chatterboard-flash';
   document.head.appendChild(style);
 })();
 
-function findCardElementsById(workItemId) {
-  const idText = String(workItemId);
-  const matches = [];
-
-  const directCard = document.querySelector(`div[data-itemid="${idText}"]`);
-  if (directCard) {
-    matches.push(directCard);
-  }
-
-  const link = document.querySelector(`a[href*="/_workitems/edit/${idText}"]`);
-  if (link) {
-    matches.push(
-      link.closest('.wit-card') ||
-      link.closest('.boards-card') ||
-      link.closest('.card-content') ||
-      link
-    );
-  }
-
-  const span = [...document.querySelectorAll('span.font-weight-semibold.selectable-text')].find(
-    (el) => el.textContent.trim() === idText
-  );
-
-  if (span) {
-    matches.push(
-      span.closest('.wit-card') ||
-      span.closest('.boards-card') ||
-      span.closest('.card-content') ||
-      span
-    );
-  }
-
-  return [...new Set(matches.filter(Boolean))];
+function invalidateSnapshotCache() {
+  snapshotCache.value = null;
+  snapshotCache.createdAt = 0;
 }
 
-function getCardColumnInfo(workItemId) {
-  const elements = findCardElementsById(workItemId);
-  const card = elements[0];
+function getBoardRoot() {
+  return (
+    document.querySelector('.kanban-board') ||
+    document.querySelector('.boards-kanban') ||
+    document
+  );
+}
 
-  if (!card) {
+function getCardIdFromElement(cardEl) {
+  if (!cardEl) {
+    return null;
+  }
+
+  const directId = cardEl.getAttribute('data-itemid');
+  if (directId) {
+    return String(directId);
+  }
+
+  const link = cardEl.querySelector('a[href*="/_workitems/edit/"]');
+  const match = link?.getAttribute('href')?.match(/\/_workitems\/edit\/(\d+)/);
+  if (match) {
+    return match[1];
+  }
+
+  return null;
+}
+
+function getColumnInfoForCard(cardEl) {
+  if (!cardEl) {
     return {
       found: false,
       isActiveColumn: false,
@@ -78,7 +78,7 @@ function getCardColumnInfo(workItemId) {
     };
   }
 
-  const column = card.closest('.kanban-board-column');
+  const column = cardEl.closest('.kanban-board-column');
   if (!column) {
     return {
       found: true,
@@ -111,9 +111,126 @@ function getCardColumnInfo(workItemId) {
   return {
     found: true,
     isActiveColumn: index > 0 && index < lastIndex,
+    reason: null,
     index,
     lastIndex,
-    totalColumns: columns.length
+    totalColumns: columns.length,
+    column,
+    row
+  };
+}
+
+function createBoardSnapshot() {
+  const boardRoot = getBoardRoot();
+  const cardsById = new Map();
+  const ticketIds = [];
+
+  const cardElements = boardRoot.querySelectorAll('div[data-itemid]');
+
+  cardElements.forEach((cardEl) => {
+    const id = getCardIdFromElement(cardEl);
+    if (!id || cardsById.has(id)) {
+      return;
+    }
+
+    const columnInfo = getColumnInfoForCard(cardEl);
+
+    cardsById.set(id, {
+      id,
+      cardEl,
+      columnInfo
+    });
+
+    ticketIds.push(id);
+  });
+
+  return {
+    boardRoot,
+    cardsById,
+    ticketIds
+  };
+}
+
+function getBoardSnapshot({ forceRefresh = false } = {}) {
+  const now = Date.now();
+  const isFresh =
+    snapshotCache.value &&
+    now - snapshotCache.createdAt < SNAPSHOT_TTL_MS;
+
+  if (!forceRefresh && isFresh) {
+    return snapshotCache.value;
+  }
+
+  const snapshot = createBoardSnapshot();
+
+  snapshotCache.value = snapshot;
+  snapshotCache.createdAt = now;
+
+  return snapshot;
+}
+
+function findCardElementsById(workItemId) {
+  const idText = String(workItemId);
+  const snapshot = getBoardSnapshot();
+  const snapshotEntry = snapshot.cardsById.get(idText);
+
+  if (snapshotEntry?.cardEl) {
+    return [snapshotEntry.cardEl];
+  }
+
+  const fallbackMatches = [];
+  const boardRoot = snapshot.boardRoot || document;
+
+  const link = boardRoot.querySelector(`a[href*="/_workitems/edit/${idText}"]`);
+  if (link) {
+    fallbackMatches.push(
+      link.closest('div[data-itemid]') ||
+      link.closest('.wit-card') ||
+      link.closest('.boards-card') ||
+      link.closest('.card-content') ||
+      link
+    );
+  }
+
+  return [...new Set(fallbackMatches.filter(Boolean))];
+}
+
+function getCardColumnInfo(workItemId) {
+  const idText = String(workItemId);
+  const snapshot = getBoardSnapshot();
+  const snapshotEntry = snapshot.cardsById.get(idText);
+
+  if (snapshotEntry) {
+    const { columnInfo } = snapshotEntry;
+    return {
+      found: columnInfo.found,
+      isActiveColumn: columnInfo.isActiveColumn,
+      reason: columnInfo.reason,
+      index: columnInfo.index,
+      lastIndex: columnInfo.lastIndex,
+      totalColumns: columnInfo.totalColumns
+    };
+  }
+
+  const fallbackElements = findCardElementsById(idText);
+  const fallbackCard = fallbackElements[0];
+
+  if (!fallbackCard) {
+    return {
+      found: false,
+      isActiveColumn: false,
+      reason: 'card_not_found'
+    };
+  }
+
+  const info = getColumnInfoForCard(fallbackCard);
+  return {
+    found: info.found,
+    isActiveColumn: info.isActiveColumn,
+    reason: info.reason,
+    index: info.index,
+    lastIndex: info.lastIndex,
+    totalColumns: info.totalColumns
   };
 }
 
@@ -134,6 +251,7 @@ function expandSwimlaneForElement(el) {
   }
 
   header.click();
+  invalidateSnapshotCache();
   return { ok: true, changed: true, reason: 'expanded' };
 }
 
@@ -159,29 +277,16 @@ function scrollTicketIntoView(workItemId) {
 }
 
 function getVisibleTicketIds() {
-  const ids = new Set();
-
-  document.querySelectorAll('div[data-itemid]').forEach((node) => {
-    const value = node.getAttribute('data-itemid');
-    if (value) {
-      ids.add(String(value));
-    }
-  });
-
-  document.querySelectorAll('a[href*="/_workitems/edit/"]').forEach((node) => {
-    const match = node.getAttribute('href')?.match(/\/_workitems\/edit\/(\d+)/);
-    if (match) {
-      ids.add(match[1]);
-    }
-  });
-
-  return [...ids];
+  const snapshot = getBoardSnapshot();
+  return [...snapshot.ticketIds];
 }
 
 function getActiveVisibleTicketIds() {
-  return getVisibleTicketIds().filter((id) => {
-    const info = getCardColumnInfo(id);
-    return info.isActiveColumn;
+  const snapshot = getBoardSnapshot();
+
+  return snapshot.ticketIds.filter((id) => {
+    const entry = snapshot.cardsById.get(id);
+    return !!entry?.columnInfo?.isActiveColumn;
   });
 }
 
@@ -221,6 +326,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'SCROLL_TICKET_INTO_VIEW') {
     const result = scrollTicketIntoView(message.workItemId);
     sendResponse(result);
+    return true;
+  }
+
+  if (message?.type === 'REFRESH_BOARD_SNAPSHOT') {
+    const snapshot = getBoardSnapshot({ forceRefresh: true });
+    sendResponse({
+      ok: true,
+      count: snapshot.ticketIds.length
+    });
     return true;
   }
 

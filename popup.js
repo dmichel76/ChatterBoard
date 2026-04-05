@@ -1,64 +1,72 @@
 const statusEl = document.getElementById('status');
 const playButton = document.getElementById('playButton');
 const stopButton = document.getElementById('stopButton');
+
 const nowReadingPanelEl = document.getElementById('nowReadingPanel');
 const frustrationScoreEl = document.getElementById('frustrationScore');
-const currentTicketIdEl = document.getElementById('currentTicketId');
 const currentTicketTitleEl = document.getElementById('currentTicketTitle');
 const currentTicketReasonEl = document.getElementById('currentTicketReason');
+
+const lastUpdatedLabelEl = document.getElementById('lastUpdatedLabel');
 const lastUpdatedRawValueEl = document.getElementById('lastUpdatedRawValue');
-const lastUpdatedSignalFillEl = document.getElementById('lastUpdatedSignalFill');
+const lastUpdatedBarEl = document.getElementById('lastUpdatedBar');
 
 function setStatus(message) {
   statusEl.textContent = message;
 }
 
-function getScoreColour(score) {
-  const clampedScore = Math.max(0, Math.min(100, Number(score) || 0));
+function getScoreColor(score) {
+  const clamped = Math.max(0, Math.min(100, Number(score) || 0));
 
-  if (clampedScore <= 50) {
-    const ratio = clampedScore / 50;
-    const red = Math.round(46 + ((245 - 46) * ratio));
-    const green = Math.round(204 + ((158 - 204) * ratio));
-    return `rgb(${red}, ${green}, 113)`;
+  if (clamped <= 50) {
+    const t = clamped / 50;
+    const r = Math.round(76 + (255 - 76) * t);
+    const g = Math.round(175 + (193 - 175) * t);
+    const b = Math.round(80 + (7 - 80) * t);
+    return `rgb(${r}, ${g}, ${b})`;
   }
 
-  const ratio = (clampedScore - 50) / 50;
-  const red = 245;
-  const green = Math.round(158 + ((63 - 158) * ratio));
-  return `rgb(${red}, ${green}, 63)`;
+  const t = (clamped - 50) / 50;
+  const r = 255;
+  const g = Math.round(193 + (59 - 193) * t);
+  const b = Math.round(7 + (48 - 7) * t);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
-function setSignalBar(fillEl, score) {
-  const clampedScore = Math.max(0, Math.min(100, Number(score) || 0));
-  fillEl.style.width = `${clampedScore}%`;
-  fillEl.style.background = getScoreColour(clampedScore);
-}
-
-function clearCurrentTicket() {
-  frustrationScoreEl.textContent = '-';
-  currentTicketIdEl.textContent = '-';
-  currentTicketTitleEl.textContent = '-';
-  currentTicketReasonEl.textContent = '-';
+function resetSignalDisplay() {
+  lastUpdatedLabelEl.textContent = 'Last updated';
   lastUpdatedRawValueEl.textContent = '-';
-  setSignalBar(lastUpdatedSignalFillEl, 0);
-  nowReadingPanelEl.classList.add('hidden');
+  lastUpdatedBarEl.style.width = '0%';
+  lastUpdatedBarEl.style.background = getScoreColor(0);
 }
 
 function setCurrentTicket(ticket) {
   if (!ticket) {
-    clearCurrentTicket();
+    frustrationScoreEl.textContent = '-';
+    currentTicketTitleEl.textContent = '-';
+    currentTicketReasonEl.textContent = '-';
+    resetSignalDisplay();
+    nowReadingPanelEl.classList.add('hidden');
     return;
   }
 
-  frustrationScoreEl.textContent = Math.round(ticket.frustrationScore ?? 0);
-  currentTicketIdEl.textContent = ticket.id ?? '-';
+  frustrationScoreEl.textContent = Number.isFinite(ticket.frustrationScore)
+    ? String(Math.round(ticket.frustrationScore))
+    : '-';
+
   currentTicketTitleEl.textContent = ticket.title ?? '-';
   currentTicketReasonEl.textContent = ticket.reason ?? '-';
 
   const lastUpdated = ticket.signals?.lastUpdated;
-  lastUpdatedRawValueEl.textContent = lastUpdated?.rawValue ?? '-';
-  setSignalBar(lastUpdatedSignalFillEl, lastUpdated?.score ?? 0);
+  if (lastUpdated) {
+    const score = Math.max(0, Math.min(100, Number(lastUpdated.score) || 0));
+    lastUpdatedLabelEl.textContent = lastUpdated.label || 'Last updated';
+    lastUpdatedRawValueEl.textContent = lastUpdated.rawValue || '-';
+    lastUpdatedBarEl.style.width = `${score}%`;
+    lastUpdatedBarEl.style.background = getScoreColor(score);
+  } else {
+    resetSignalDisplay();
+  }
 
   nowReadingPanelEl.classList.remove('hidden');
 }
@@ -96,7 +104,7 @@ chrome.runtime.onMessage.addListener((message) => {
 playButton.addEventListener('click', async () => {
   try {
     setStatus('Running...');
-    clearCurrentTicket();
+    setCurrentTicket(null);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !tab.url) {
@@ -146,7 +154,7 @@ stopButton.addEventListener('click', async () => {
     }
 
     setStatus('Stopped.');
-    clearCurrentTicket();
+    setCurrentTicket(null);
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
@@ -154,5 +162,5 @@ stopButton.addEventListener('click', async () => {
   }
 });
 
-clearCurrentTicket();
+resetSignalDisplay();
 loadState();
