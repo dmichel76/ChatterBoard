@@ -1,4 +1,5 @@
 const MAX_TICKETS_TO_SPEAK = 5;
+const WORK_ITEM_BATCH_SIZE = 200;
 
 const runState = {
   isRunning: false,
@@ -44,11 +45,19 @@ function speak(text) {
       onEvent: (event) => {
         if (event.type === 'end') {
           resolve();
-        } else if (
-          event.type === 'error' ||
-          event.type === 'interrupted' ||
-          event.type === 'cancelled'
-        ) {
+          return;
+        }
+
+        if (event.type === 'interrupted' || event.type === 'cancelled') {
+          if (runState.stopRequested) {
+            resolve();
+          } else {
+            reject(new Error(`TTS failed: ${event.type}`));
+          }
+          return;
+        }
+
+        if (event.type === 'error') {
           reject(new Error(`TTS failed: ${event.type}`));
         }
       }
@@ -76,37 +85,7 @@ function parseAdoUrl(url) {
   return null;
 }
 
-async function runWiqlQuery({ org, project, adoPat }) {
-  const wiql = {
-    query: `
-      SELECT [System.Id]
-      FROM WorkItems
-      WHERE [System.TeamProject] = '${project}'
-      ORDER BY [System.ChangedDate] ASC
-    `
-  };
-
-  const response = await fetch(
-    `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.0`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Basic ' + btoa(':' + adoPat)
-      },
-      body: JSON.stringify(wiql)
-    }
-  );
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`ADO WIQL failed: ${response.status} ${response.statusText} - ${body}`);
-  }
-
-  return response.json();
-}
-
-async function fetchWorkItems({ org, project, adoPat, ids }) {
+async function fetchWorkItemsBatch({ org, project, adoPat, ids }) {
   const response = await fetch(
     `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_apis/wit/workitems?ids=${ids.join(',')}&api-version=7.0`,
     {
@@ -122,6 +101,36 @@ async function fetchWorkItems({ org, project, adoPat, ids }) {
   }
 
   return response.json();
+}
+
+function chunkArray(items, size) {
+  const chunks = [];
+
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+
+  return chunks;
+}
+
+async function fetchAllWorkItems({ org, project, adoPat, ids }) {
+  const batches = chunkArray(ids, WORK_ITEM_BATCH_SIZE);
+  const allItems = [];
+
+  for (const batchIds of batches) {
+    ensureNotStopped();
+
+    const batchData = await fetchWorkItemsBatch({
+      org,
+      project,
+      adoPat,
+      ids: batchIds
+    });
+
+    allItems.push(...(batchData.value || []));
+  }
+
+  return allItems;
 }
 
 function sendTabMessage(tabId, message) {
@@ -235,31 +244,11 @@ function normaliseValueToScore(value, minValue, maxValue) {
 }
 
 async function getActiveVisibleTicketIds(tabId) {
-  const visibleResponse = await sendTabMessage(tabId, {
-    type: 'GET_VISIBLE_TICKET_IDS'
+  const response = await sendTabMessage(tabId, {
+    type: 'GET_ACTIVE_VISIBLE_TICKET_IDS'
   });
 
-  const visibleIds = (visibleResponse?.ids || []).map(String);
-  const activeIds = [];
-
-  for (const id of visibleIds) {
-    ensureNotStopped();
-
-    try {
-      const placement = await sendTabMessage(tabId, {
-        type: 'IS_TICKET_IN_ACTIVE_COLUMN',
-        workItemId: id
-      });
-
-      if (placement?.isActiveColumn) {
-        activeIds.push(Number(id));
-      }
-    } catch (error) {
-      console.warn('Could not inspect ticket column placement', id, error);
-    }
-  }
-
-  return activeIds;
+  return (response?.ids || []).map((id) => Number(id)).filter((id) => Number.isFinite(id));
 }
 
 function buildLastUpdatedSignalEntries(items) {
@@ -335,25 +324,12 @@ async function runChatterBoard({ tabId, url }) {
     }
 
     setRunState({
-      statusMessage: `Querying Azure DevOps for ${parsed.project}...`
+      statusMessage: 'Reading visible active tickets from the board...'
     });
 
-    const data = await runWiqlQuery({
-      org: parsed.org,
-      project: parsed.project,
-      adoPat
-    });
+    const ids = await getActiveVisibleTicketIds(tabId);
 
     ensureNotStopped();
-
-    const activeVisibleIds = new Set(
-      (await getActiveVisibleTicketIds(tabId)).map((id) => Number(id))
-    );
-
-    const ids = (data.workItems || [])
-      .map((item) => item.id)
-      .filter((id) => activeVisibleIds.has(Number(id)))
-      .slice(0, 40);
 
     if (!ids.length) {
       setRunState({
@@ -363,7 +339,11 @@ async function runChatterBoard({ tabId, url }) {
       return { ok: true, count: 0 };
     }
 
-    const workItemsData = await fetchWorkItems({
+    setRunState({
+      statusMessage: `Loading ${ids.length} visible active work item(s)...`
+    });
+
+    const items = await fetchAllWorkItems({
       org: parsed.org,
       project: parsed.project,
       adoPat,
@@ -372,7 +352,6 @@ async function runChatterBoard({ tabId, url }) {
 
     ensureNotStopped();
 
-    const items = workItemsData.value || [];
     const entries = buildLastUpdatedSignalEntries(items);
     const sortedEntries = sortEntriesForPlayback(entries);
     const selected = sortedEntries.slice(0, MAX_TICKETS_TO_SPEAK);
@@ -421,6 +400,7 @@ async function runChatterBoard({ tabId, url }) {
       }
 
       await speak(`Last updated ${lastUpdated.speechValue}. ${title}`);
+      ensureNotStopped();
 
       try {
         await sendTabMessage(tabId, {

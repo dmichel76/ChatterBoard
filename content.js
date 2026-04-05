@@ -50,8 +50,9 @@ function findCardElementsById(workItemId) {
     );
   }
 
-  const span = [...document.querySelectorAll('span.font-weight-semibold.selectable-text')]
-    .find((el) => el.textContent.trim() === idText);
+  const span = [...document.querySelectorAll('span.font-weight-semibold.selectable-text')].find(
+    (el) => el.textContent.trim() === idText
+  );
 
   if (span) {
     matches.push(
@@ -95,9 +96,7 @@ function getCardColumnInfo(workItemId) {
     };
   }
 
-  const columns = [...row.children].filter((el) =>
-    el.classList?.contains('kanban-board-column')
-  );
+  const columns = [...row.children].filter((el) => el.classList?.contains('kanban-board-column'));
   const index = columns.indexOf(column);
   const lastIndex = columns.length - 1;
 
@@ -179,6 +178,13 @@ function getVisibleTicketIds() {
   return [...ids];
 }
 
+function getActiveVisibleTicketIds() {
+  return getVisibleTicketIds().filter((id) => {
+    const info = getCardColumnInfo(id);
+    return info.isActiveColumn;
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'HIGHLIGHT_TICKET') {
     const elements = findCardElementsById(message.workItemId);
@@ -202,6 +208,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message?.type === 'GET_VISIBLE_TICKET_IDS') {
     const ids = getVisibleTicketIds();
+    sendResponse({ ok: true, ids });
+    return true;
+  }
+
+  if (message?.type === 'GET_ACTIVE_VISIBLE_TICKET_IDS') {
+    const ids = getActiveVisibleTicketIds();
     sendResponse({ ok: true, ids });
     return true;
   }
