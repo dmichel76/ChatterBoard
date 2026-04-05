@@ -109,11 +109,31 @@ function getCardColumnInfo(workItemId) {
 
   return {
     found: true,
-    isActiveColumn: index > 0 && index < lastIndex,
+    isActiveColumn: index >  0 && index < lastIndex,
     index,
     lastIndex,
     totalColumns: columns.length
   };
+}
+
+function expandSwimlaneForElement(el) {
+  const swimlaneRow = el.closest('.kanban-board-row');
+
+  if (!swimlaneRow) {
+    return { ok: false, reason: 'swimlane_not_found' };
+  }
+
+  if (swimlaneRow.classList.contains('expanded')) {
+    return { ok: true, changed: false };
+  }
+
+  const header = swimlaneRow.querySelector('.kanban-board-row-header');
+  if (!header) {
+    return { ok: false, reason: 'swimlane_header_not_found' };
+  }
+
+  header.click();
+  return { ok: true, changed: true };
 }
 
 function scrollTicketIntoView(workItemId) {
@@ -124,13 +144,17 @@ function scrollTicketIntoView(workItemId) {
     return { ok: false, reason: 'not_found' };
   }
 
-  el.scrollIntoView({
-    behavior: 'smooth',
-    block: 'center',
-    inline: 'center'
-  });
+  const expansion = expandSwimlaneForElement(el);
 
-  return { ok: true };
+  setTimeout(() => {
+    el.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+      inline: 'center'
+    });
+  }, expansion.changed ? 250 : 0);
+
+  return { ok: true, expansion };
 }
 
 function getVisibleTicketIds() {
