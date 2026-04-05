@@ -1,3 +1,35 @@
+const MAX_TICKETS_TO_SPEAK = 5;
+
+const runState = {
+  isRunning: false,
+  stopRequested: false,
+  currentTabId: null,
+  currentHighlightedTicketId: null,
+  currentTicket: null,
+  statusMessage: 'Idle.'
+};
+
+function setRunState(patch) {
+  Object.assign(runState, patch);
+  broadcastState();
+}
+
+function broadcastState() {
+  chrome.runtime.sendMessage({
+    type: 'CHATTERBOARD_STATE',
+    state: {
+      isRunning: runState.isRunning,
+      stopRequested: runState.stopRequested,
+      currentTabId: runState.currentTabId,
+      currentHighlightedTicketId: runState.currentHighlightedTicketId,
+      currentTicket: runState.currentTicket,
+      statusMessage: runState.statusMessage
+    }
+  }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
 function speak(text) {
   return new Promise((resolve, reject) => {
     chrome.tts.stop();
@@ -117,148 +149,286 @@ function sendTabMessage(tabId, message) {
   });
 }
 
+async function clearCurrentHighlightIfAny() {
+  if (!runState.currentTabId || !runState.currentHighlightedTicketId) {
+    return;
+  }
+
+  try {
+    await sendTabMessage(runState.currentTabId, {
+      type: 'CLEAR_HIGHLIGHT_TICKET',
+      workItemId: runState.currentHighlightedTicketId
+    });
+  } catch (error) {
+    console.warn('Failed to clear current highlight', error);
+  }
+
+  runState.currentHighlightedTicketId = null;
+}
+
+function requestStop() {
+  runState.stopRequested = true;
+  chrome.tts.stop();
+  setRunState({
+    stopRequested: true,
+    statusMessage: 'Stopping...'
+  });
+}
+
+function ensureNotStopped() {
+  if (runState.stopRequested) {
+    throw new Error('Run stopped by user.');
+  }
+}
+
+async function runChatterBoard({ tabId, url }) {
+  if (runState.isRunning) {
+    throw new Error('ChatterBoard is already running.');
+  }
+
+  setRunState({
+    isRunning: true,
+    stopRequested: false,
+    currentTabId: tabId,
+    currentHighlightedTicketId: null,
+    currentTicket: null,
+    statusMessage: 'Starting...'
+  });
+
+  try {
+    if (!tabId || !url) {
+      throw new Error('Missing tabId or url.');
+    }
+
+    const stored = await chrome.storage.sync.get(['adoPat']);
+    const adoPat = (stored.adoPat || '').trim();
+
+    if (!adoPat) {
+      throw new Error('No Azure DevOps PAT found in Options.');
+    }
+
+    const parsed = parseAdoUrl(url);
+    if (!parsed) {
+      throw new Error('Could not parse organisation and project from the URL.');
+    }
+
+    setRunState({
+      statusMessage: `Querying Azure DevOps for ${parsed.project}...`
+    });
+
+    const data = await runWiqlQuery({
+      org: parsed.org,
+      project: parsed.project,
+      adoPat
+    });
+
+    ensureNotStopped();
+
+    const visibleResponse = await sendTabMessage(tabId, {
+      type: 'GET_VISIBLE_TICKET_IDS'
+    });
+
+    const visibleIds = new Set((visibleResponse?.ids || []).map(String));
+
+    const ids = (data.workItems || [])
+      .map((item) => item.id)
+      .filter((id) => visibleIds.has(String(id)))
+      .slice(0, 40);
+
+    if (!ids.length) {
+      setRunState({
+        statusMessage: 'No visible work items found on the current board.'
+      });
+      await speak('No work items found.');
+      return { ok: true, count: 0 };
+    }
+
+    const workItemsData = await fetchWorkItems({
+      org: parsed.org,
+      project: parsed.project,
+      adoPat,
+      ids
+    });
+
+    ensureNotStopped();
+
+    const items = workItemsData.value || [];
+
+    const scored = items.map((item) => {
+      const result = scoreWorkItem(item);
+      return {
+        item,
+        score: result.score,
+        ageDays: result.ageDays
+      };
+    });
+
+    scored.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return b.ageDays - a.ageDays;
+    });
+
+    const selected = [];
+
+    for (const entry of scored) {
+      ensureNotStopped();
+
+      const id = entry.item.id;
+
+      try {
+        const placement = await sendTabMessage(tabId, {
+          type: 'IS_TICKET_IN_ACTIVE_COLUMN',
+          workItemId: id
+        });
+
+        if (placement?.isActiveColumn) {
+          selected.push(entry);
+        }
+      } catch (error) {
+        console.warn('Could not inspect ticket column placement', id, error);
+      }
+
+      if (selected.length >= MAX_TICKETS_TO_SPEAK) {
+        break;
+      }
+    }
+
+    if (!selected.length) {
+      setRunState({
+        statusMessage: 'No active tickets found outside the first and last columns.'
+      });
+      await speak('No active tickets found outside the first and last columns.');
+      return { ok: true, count: 0 };
+    }
+
+    for (const entry of selected) {
+      ensureNotStopped();
+
+      const id = entry.item.id;
+      const title = entry.item.fields['System.Title'] || 'Untitled work item';
+      const reason = `No update for ${entry.ageDays} days`;
+
+      setRunState({
+        currentHighlightedTicketId: id,
+        currentTicket: {
+          id,
+          title,
+          reason
+        },
+        statusMessage: `Reading ticket ${id}...`
+      });
+
+      try {
+        await sendTabMessage(tabId, {
+          type: 'SCROLL_TICKET_INTO_VIEW',
+          workItemId: id
+        });
+      } catch (error) {
+        console.warn('Scroll failed', id, error);
+      }
+
+      try {
+        await sendTabMessage(tabId, {
+          type: 'HIGHLIGHT_TICKET',
+          workItemId: id
+        });
+      } catch (error) {
+        console.warn('Highlight failed', id, error);
+      }
+
+      await speak(`${reason}. ${title}`);
+
+      try {
+        await sendTabMessage(tabId, {
+          type: 'CLEAR_HIGHLIGHT_TICKET',
+          workItemId: id
+        });
+      } catch (error) {
+        console.warn('Clear highlight failed', id, error);
+      }
+
+      setRunState({
+        currentHighlightedTicketId: null,
+        currentTicket: null,
+        statusMessage: 'Moving to next ticket...'
+      });
+    }
+
+    setRunState({
+      statusMessage: `Done. Spoke ${selected.length} ticket(s).`
+    });
+
+    return { ok: true, count: selected.length };
+  } catch (error) {
+    if (error.message === 'Run stopped by user.') {
+      await clearCurrentHighlightIfAny();
+      setRunState({
+        currentHighlightedTicketId: null,
+        currentTicket: null,
+        statusMessage: 'Stopped.'
+      });
+      return { ok: true, count: 0, stopped: true };
+    }
+
+    await clearCurrentHighlightIfAny();
+    setRunState({
+      currentHighlightedTicketId: null,
+      currentTicket: null,
+      statusMessage: `Error: ${error.message}`
+    });
+    throw error;
+  } finally {
+    setRunState({
+      isRunning: false,
+      stopRequested: false,
+      currentTabId: null,
+      currentHighlightedTicketId: null,
+      currentTicket: null
+    });
+  }
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'RUN_CHATTERBOARD') {
-    (async () => {
-      const tabId = message.tabId;
-      const url = message.url;
-
-      if (!tabId || !url) {
-        sendResponse({ ok: false, error: 'Missing tabId or url.' });
-        return;
-      }
-
-      const stored = await chrome.storage.sync.get(['adoPat']);
-      const adoPat = (stored.adoPat || '').trim();
-
-      if (!adoPat) {
-        sendResponse({ ok: false, error: 'No Azure DevOps PAT found in Options.' });
-        return;
-      }
-
-      const parsed = parseAdoUrl(url);
-      if (!parsed) {
-        sendResponse({ ok: false, error: 'Could not parse organisation and project from the URL.' });
-        return;
-      }
-
-      const data = await runWiqlQuery({
-        org: parsed.org,
-        project: parsed.project,
-        adoPat
+    runChatterBoard({
+      tabId: message.tabId,
+      url: message.url
+    })
+      .then(sendResponse)
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message });
       });
 
-      const visibleResponse = await sendTabMessage(tabId, {
-        type: 'GET_VISIBLE_TICKET_IDS'
+    return true;
+  }
+
+  if (message?.type === 'STOP_CHATTERBOARD') {
+    requestStop();
+    clearCurrentHighlightIfAny()
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message });
       });
 
-      const visibleIds = new Set((visibleResponse?.ids || []).map(String));
+    return true;
+  }
 
-      const ids = (data.workItems || [])
-        .map((item) => item.id)
-        .filter((id) => visibleIds.has(String(id)))
-        .slice(0, 40);
-
-      if (!ids.length) {
-        await speak('No work items found.');
-        sendResponse({ ok: true, count: 0 });
-        return;
+  if (message?.type === 'GET_CHATTERBOARD_STATE') {
+    sendResponse({
+      ok: true,
+      state: {
+        isRunning: runState.isRunning,
+        stopRequested: runState.stopRequested,
+        currentTabId: runState.currentTabId,
+        currentHighlightedTicketId: runState.currentHighlightedTicketId,
+        currentTicket: runState.currentTicket,
+        statusMessage: runState.statusMessage
       }
-
-      const workItemsData = await fetchWorkItems({
-        org: parsed.org,
-        project: parsed.project,
-        adoPat,
-        ids
-      });
-
-      const items = workItemsData.value || [];
-
-      const scored = items.map((item) => {
-        const result = scoreWorkItem(item);
-        return {
-          item,
-          score: result.score,
-          ageDays: result.ageDays
-        };
-      });
-
-      scored.sort((a, b) => {
-        if (b.score !== a.score) {
-          return b.score - a.score;
-        }
-        return b.ageDays - a.ageDays;
-      });
-
-      const selected = [];
-
-      for (const entry of scored) {
-        const id = entry.item.id;
-
-        try {
-          const placement = await sendTabMessage(tabId, {
-            type: 'IS_TICKET_IN_ACTIVE_COLUMN',
-            workItemId: id
-          });
-
-          if (placement?.isActiveColumn) {
-            selected.push(entry);
-          }
-        } catch (error) {
-          console.warn('Could not inspect ticket column placement', id, error);
-        }
-
-        if (selected.length >= 5) {
-          break;
-        }
-      }
-
-      if (!selected.length) {
-        await speak('No active tickets found outside the first and last columns.');
-        sendResponse({ ok: true, count: 0 });
-        return;
-      }
-
-      for (const entry of selected) {
-        const id = entry.item.id;
-        const title = entry.item.fields['System.Title'] || 'Untitled work item';
-
-        try {
-          await sendTabMessage(tabId, {
-            type: 'SCROLL_TICKET_INTO_VIEW',
-            workItemId: id
-          });
-        } catch (error) {
-          console.warn('Scroll failed', id, error);
-        }
-
-        try {
-          await sendTabMessage(tabId, {
-            type: 'HIGHLIGHT_TICKET',
-            workItemId: id
-          });
-        } catch (error) {
-          console.warn('Highlight failed', id, error);
-        }
-
-        await speak(`Ticket ${id}. No update for ${entry.ageDays} days. ${title}`);
-
-        try {
-          await sendTabMessage(tabId, {
-            type: 'CLEAR_HIGHLIGHT_TICKET',
-            workItemId: id
-          });
-        } catch (error) {
-          console.warn('Clear highlight failed', id, error);
-        }
-      }
-
-      sendResponse({ ok: true, count: selected.length });
-    })().catch((error) => {
-      sendResponse({ ok: false, error: error.message });
     });
-
     return true;
   }
 

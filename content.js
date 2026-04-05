@@ -95,7 +95,9 @@ function getCardColumnInfo(workItemId) {
     };
   }
 
-  const columns = [...row.children].filter((el) => el.classList?.contains('kanban-board-column'));
+  const columns = [...row.children].filter((el) =>
+    el.classList?.contains('kanban-board-column')
+  );
   const index = columns.indexOf(column);
   const lastIndex = columns.length - 1;
 
@@ -109,7 +111,7 @@ function getCardColumnInfo(workItemId) {
 
   return {
     found: true,
-    isActiveColumn: index >  0 && index < lastIndex,
+    isActiveColumn: index > 0 && index < lastIndex,
     index,
     lastIndex,
     totalColumns: columns.length
@@ -120,20 +122,20 @@ function expandSwimlaneForElement(el) {
   const swimlaneRow = el.closest('.kanban-board-row');
 
   if (!swimlaneRow) {
-    return { ok: false, reason: 'swimlane_not_found' };
+    return { ok: true, changed: false, reason: 'no_swimlane' };
   }
 
   if (swimlaneRow.classList.contains('expanded')) {
-    return { ok: true, changed: false };
+    return { ok: true, changed: false, reason: 'already_expanded' };
   }
 
   const header = swimlaneRow.querySelector('.kanban-board-row-header');
   if (!header) {
-    return { ok: false, reason: 'swimlane_header_not_found' };
+    return { ok: false, changed: false, reason: 'swimlane_header_not_found' };
   }
 
   header.click();
-  return { ok: true, changed: true };
+  return { ok: true, changed: true, reason: 'expanded' };
 }
 
 function scrollTicketIntoView(workItemId) {
@@ -180,7 +182,6 @@ function getVisibleTicketIds() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'HIGHLIGHT_TICKET') {
     const elements = findCardElementsById(message.workItemId);
-    console.log('HIGHLIGHT_TICKET', message.workItemId, elements);
     elements.forEach((el) => el.classList.add(FLASH_CLASS));
     sendResponse({ ok: true, count: elements.length });
     return true;
@@ -188,7 +189,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message?.type === 'CLEAR_HIGHLIGHT_TICKET') {
     const elements = findCardElementsById(message.workItemId);
-    console.log('CLEAR_HIGHLIGHT_TICKET', message.workItemId, elements);
     elements.forEach((el) => el.classList.remove(FLASH_CLASS));
     sendResponse({ ok: true, count: elements.length });
     return true;
@@ -196,7 +196,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message?.type === 'IS_TICKET_IN_ACTIVE_COLUMN') {
     const info = getCardColumnInfo(message.workItemId);
-    console.log('IS_TICKET_IN_ACTIVE_COLUMN', message.workItemId, info);
     sendResponse({ ok: true, ...info });
     return true;
   }
@@ -208,10 +207,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'SCROLL_TICKET_INTO_VIEW') {
-  const result = scrollTicketIntoView(message.workItemId);
-  sendResponse(result);
-  return true;
-}
+    const result = scrollTicketIntoView(message.workItemId);
+    sendResponse(result);
+    return true;
+  }
 
   return false;
 });
