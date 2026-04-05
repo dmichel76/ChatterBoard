@@ -15,19 +15,22 @@ function setRunState(patch) {
 }
 
 function broadcastState() {
-  chrome.runtime.sendMessage({
-    type: 'CHATTERBOARD_STATE',
-    state: {
-      isRunning: runState.isRunning,
-      stopRequested: runState.stopRequested,
-      currentTabId: runState.currentTabId,
-      currentHighlightedTicketId: runState.currentHighlightedTicketId,
-      currentTicket: runState.currentTicket,
-      statusMessage: runState.statusMessage
+  chrome.runtime.sendMessage(
+    {
+      type: 'CHATTERBOARD_STATE',
+      state: {
+        isRunning: runState.isRunning,
+        stopRequested: runState.stopRequested,
+        currentTabId: runState.currentTabId,
+        currentHighlightedTicketId: runState.currentHighlightedTicketId,
+        currentTicket: runState.currentTicket,
+        statusMessage: runState.statusMessage
+      }
+    },
+    () => {
+      void chrome.runtime.lastError;
     }
-  }, () => {
-    void chrome.runtime.lastError;
-  });
+  );
 }
 
 function speak(text) {
@@ -89,7 +92,7 @@ async function runWiqlQuery({ org, project, adoPat }) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Basic ' + btoa(':' + adoPat)
+        Authorization: 'Basic ' + btoa(':' + adoPat)
       },
       body: JSON.stringify(wiql)
     }
@@ -108,7 +111,7 @@ async function fetchWorkItems({ org, project, adoPat, ids }) {
     `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_apis/wit/workitems?ids=${ids.join(',')}&api-version=7.0`,
     {
       headers: {
-        'Authorization': 'Basic ' + btoa(':' + adoPat)
+        Authorization: 'Basic ' + btoa(':' + adoPat)
       }
     }
   );
@@ -119,22 +122,6 @@ async function fetchWorkItems({ org, project, adoPat, ids }) {
   }
 
   return response.json();
-}
-
-function scoreWorkItem(item) {
-  const changedDate = item.fields['System.ChangedDate'];
-
-  if (!changedDate) {
-    return { score: 0, ageDays: 0 };
-  }
-
-  const ageMs = Date.now() - new Date(changedDate).getTime();
-  const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
-
-  return {
-    score: ageDays > 2 ? 1 : 0,
-    ageDays
-  };
 }
 
 function sendTabMessage(tabId, message) {
@@ -181,6 +168,141 @@ function ensureNotStopped() {
   }
 }
 
+function getElapsedMsSinceChanged(item) {
+  const changedDate = item.fields['System.ChangedDate'];
+
+  if (!changedDate) {
+    return 0;
+  }
+
+  const changedTime = new Date(changedDate).getTime();
+  if (Number.isNaN(changedTime)) {
+    return 0;
+  }
+
+  return Math.max(0, Date.now() - changedTime);
+}
+
+function formatDurationShort(durationMs) {
+  const hourMs = 1000 * 60 * 60;
+  const dayMs = hourMs * 24;
+
+  if (durationMs < hourMs) {
+    return 'just now';
+  }
+
+  const totalHours = Math.floor(durationMs / hourMs);
+
+  if (durationMs < dayMs) {
+    return `${totalHours}h`;
+  }
+
+  const days = Math.floor(durationMs / dayMs);
+  const hours = Math.floor((durationMs % dayMs) / hourMs);
+
+  if (hours === 0) {
+    return `${days}d`;
+  }
+
+  return `${days}d ${hours}h`;
+}
+
+function formatDurationForSpeech(durationMs) {
+  const hourMs = 1000 * 60 * 60;
+  const dayMs = hourMs * 24;
+
+  if (durationMs < hourMs) {
+    return 'just now';
+  }
+
+  if (durationMs < dayMs) {
+    const hours = Math.max(1, Math.round(durationMs / hourMs));
+    return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  }
+
+  const days = Math.max(1, Math.round(durationMs / dayMs));
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+function normaliseValueToScore(value, minValue, maxValue) {
+  if (maxValue <= minValue) {
+    return 50;
+  }
+
+  const raw = ((value - minValue) / (maxValue - minValue)) * 100;
+  const clamped = Math.max(0, Math.min(100, raw));
+  return Math.round(clamped);
+}
+
+async function getActiveVisibleTicketIds(tabId) {
+  const visibleResponse = await sendTabMessage(tabId, {
+    type: 'GET_VISIBLE_TICKET_IDS'
+  });
+
+  const visibleIds = (visibleResponse?.ids || []).map(String);
+  const activeIds = [];
+
+  for (const id of visibleIds) {
+    ensureNotStopped();
+
+    try {
+      const placement = await sendTabMessage(tabId, {
+        type: 'IS_TICKET_IN_ACTIVE_COLUMN',
+        workItemId: id
+      });
+
+      if (placement?.isActiveColumn) {
+        activeIds.push(Number(id));
+      }
+    } catch (error) {
+      console.warn('Could not inspect ticket column placement', id, error);
+    }
+  }
+
+  return activeIds;
+}
+
+function buildLastUpdatedSignalEntries(items) {
+  const elapsedValues = items.map((item) => getElapsedMsSinceChanged(item));
+  const minElapsedMs = Math.min(...elapsedValues);
+  const maxElapsedMs = Math.max(...elapsedValues);
+
+  return items.map((item) => {
+    const elapsedMs = getElapsedMsSinceChanged(item);
+    const normalisedScore = normaliseValueToScore(elapsedMs, minElapsedMs, maxElapsedMs);
+
+    return {
+      item,
+      signals: {
+        lastUpdated: {
+          label: 'Last updated',
+          rawValue: formatDurationShort(elapsedMs),
+          speechValue: formatDurationForSpeech(elapsedMs),
+          normalisedScore
+        }
+      },
+      frustrationScore: normalisedScore
+    };
+  });
+}
+
+function sortEntriesForPlayback(entries) {
+  return [...entries].sort((a, b) => {
+    if (b.frustrationScore !== a.frustrationScore) {
+      return b.frustrationScore - a.frustrationScore;
+    }
+
+    const aElapsed = getElapsedMsSinceChanged(a.item);
+    const bElapsed = getElapsedMsSinceChanged(b.item);
+
+    if (bElapsed !== aElapsed) {
+      return bElapsed - aElapsed;
+    }
+
+    return Number(a.item.id) - Number(b.item.id);
+  });
+}
+
 async function runChatterBoard({ tabId, url }) {
   if (runState.isRunning) {
     throw new Error('ChatterBoard is already running.');
@@ -224,22 +346,20 @@ async function runChatterBoard({ tabId, url }) {
 
     ensureNotStopped();
 
-    const visibleResponse = await sendTabMessage(tabId, {
-      type: 'GET_VISIBLE_TICKET_IDS'
-    });
-
-    const visibleIds = new Set((visibleResponse?.ids || []).map(String));
+    const activeVisibleIds = new Set(
+      (await getActiveVisibleTicketIds(tabId)).map((id) => Number(id))
+    );
 
     const ids = (data.workItems || [])
       .map((item) => item.id)
-      .filter((id) => visibleIds.has(String(id)))
+      .filter((id) => activeVisibleIds.has(Number(id)))
       .slice(0, 40);
 
     if (!ids.length) {
       setRunState({
-        statusMessage: 'No visible work items found on the current board.'
+        statusMessage: 'No active visible work items found on the current board.'
       });
-      await speak('No work items found.');
+      await speak('No active work items found.');
       return { ok: true, count: 0 };
     }
 
@@ -253,69 +373,31 @@ async function runChatterBoard({ tabId, url }) {
     ensureNotStopped();
 
     const items = workItemsData.value || [];
-
-    const scored = items.map((item) => {
-      const result = scoreWorkItem(item);
-      return {
-        item,
-        score: result.score,
-        ageDays: result.ageDays
-      };
-    });
-
-    scored.sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-      return b.ageDays - a.ageDays;
-    });
-
-    const selected = [];
-
-    for (const entry of scored) {
-      ensureNotStopped();
-
-      const id = entry.item.id;
-
-      try {
-        const placement = await sendTabMessage(tabId, {
-          type: 'IS_TICKET_IN_ACTIVE_COLUMN',
-          workItemId: id
-        });
-
-        if (placement?.isActiveColumn) {
-          selected.push(entry);
-        }
-      } catch (error) {
-        console.warn('Could not inspect ticket column placement', id, error);
-      }
-
-      if (selected.length >= MAX_TICKETS_TO_SPEAK) {
-        break;
-      }
-    }
-
-    if (!selected.length) {
-      setRunState({
-        statusMessage: 'No active tickets found outside the first and last columns.'
-      });
-      await speak('No active tickets found outside the first and last columns.');
-      return { ok: true, count: 0 };
-    }
+    const entries = buildLastUpdatedSignalEntries(items);
+    const sortedEntries = sortEntriesForPlayback(entries);
+    const selected = sortedEntries.slice(0, MAX_TICKETS_TO_SPEAK);
 
     for (const entry of selected) {
       ensureNotStopped();
 
       const id = entry.item.id;
       const title = entry.item.fields['System.Title'] || 'Untitled work item';
-      const reason = `No update for ${entry.ageDays} days`;
+      const lastUpdated = entry.signals.lastUpdated;
 
       setRunState({
         currentHighlightedTicketId: id,
         currentTicket: {
           id,
           title,
-          reason
+          reason: `Last updated ${lastUpdated.rawValue} ago`,
+          frustrationScore: entry.frustrationScore,
+          signals: {
+            lastUpdated: {
+              label: lastUpdated.label,
+              rawValue: lastUpdated.rawValue,
+              score: lastUpdated.normalisedScore
+            }
+          }
         },
         statusMessage: `Reading ticket ${id}...`
       });
@@ -338,7 +420,7 @@ async function runChatterBoard({ tabId, url }) {
         console.warn('Highlight failed', id, error);
       }
 
-      await speak(`${reason}. ${title}`);
+      await speak(`Last updated ${lastUpdated.speechValue}. ${title}`);
 
       try {
         await sendTabMessage(tabId, {

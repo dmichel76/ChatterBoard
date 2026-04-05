@@ -5,11 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ChatterBoard</title>
   <style>
+    :root {
+      color-scheme: light;
+    }
+
     body {
       font-family: Arial, sans-serif;
-      width: 340px;
+      width: 360px;
       padding: 16px;
       box-sizing: border-box;
+      margin: 0;
+      background: #ffffff;
+      color: #1f1f1f;
     }
 
     h1 {
@@ -49,9 +56,9 @@
 
     .now-reading {
       margin-top: 14px;
-      padding: 10px;
+      padding: 12px;
       border: 1px solid #ddd;
-      border-radius: 6px;
+      border-radius: 8px;
       background: #fafafa;
       font-size: 12px;
     }
@@ -62,19 +69,94 @@
 
     .now-reading h2 {
       font-size: 13px;
-      margin: 0 0 8px;
+      margin: 0 0 10px;
+    }
+
+    .score-block {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .score-label {
+      font-size: 11px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #666;
+    }
+
+    .score-value {
+      font-size: 30px;
+      font-weight: bold;
+      line-height: 1;
     }
 
     .field-label {
       font-weight: bold;
       display: block;
-      margin-top: 6px;
+      margin-top: 8px;
+      color: #333;
     }
 
     .field-value {
       display: block;
       margin-top: 2px;
       word-break: break-word;
+      color: #111;
+    }
+
+    .signal-list {
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid #e5e5e5;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .signal-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .signal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .signal-label {
+      font-weight: bold;
+      color: #333;
+    }
+
+    .signal-raw-value {
+      color: #444;
+      white-space: nowrap;
+    }
+
+    .signal-track {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: #e7e7e7;
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+    }
+
+    .signal-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      transition: width 180ms ease;
     }
   </style>
 </head>
@@ -93,6 +175,11 @@
   <div id="nowReadingPanel" class="now-reading hidden">
     <h2>Now reading</h2>
 
+    <div class="score-block">
+      <span class="score-label">Frustration score</span>
+      <span id="frustrationScore" class="score-value">-</span>
+    </div>
+
     <span class="field-label">Ticket</span>
     <span id="currentTicketId" class="field-value">-</span>
 
@@ -101,6 +188,18 @@
 
     <span class="field-label">Reason</span>
     <span id="currentTicketReason" class="field-value">-</span>
+
+    <div class="signal-list">
+      <div class="signal-row">
+        <div class="signal-header">
+          <span class="signal-label">Last updated</span>
+          <span id="lastUpdatedRawValue" class="signal-raw-value">-</span>
+        </div>
+        <div class="signal-track" aria-hidden="true">
+          <div id="lastUpdatedSignalFill" class="signal-fill"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="popup.js"></script>
