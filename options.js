@@ -3,7 +3,8 @@ const DEFAULT_SETTINGS = {
   voiceSignalThreshold: 75,
   scoringMode: 'relative',
   absoluteScaleMaxDays: 30,
-  maxTicketsToSpeak: 5
+  maxTicketsToSpeak: 5,
+  tagsToIgnore: ''
 };
 
 const fields = {
@@ -11,7 +12,8 @@ const fields = {
   voiceSignalThreshold: document.getElementById('voiceSignalThreshold'),
   scoringMode: document.getElementById('scoringMode'),
   absoluteScaleMaxDays: document.getElementById('absoluteScaleMaxDays'),
-  maxTicketsToSpeak: document.getElementById('maxTicketsToSpeak')
+  maxTicketsToSpeak: document.getElementById('maxTicketsToSpeak'),
+  tagsToIgnore: document.getElementById('tagsToIgnore')
 };
 
 const statusEl = document.getElementById('status');
@@ -40,7 +42,8 @@ async function loadOptions() {
     'voiceSignalThreshold',
     'scoringMode',
     'absoluteScaleMaxDays',
-    'maxTicketsToSpeak'
+    'maxTicketsToSpeak',
+    'tagsToIgnore'
   ]);
 
   fields.adoPat.value = stored.adoPat || DEFAULT_SETTINGS.adoPat;
@@ -63,6 +66,7 @@ async function loadOptions() {
     50,
     DEFAULT_SETTINGS.maxTicketsToSpeak
   );
+  fields.tagsToIgnore.value = stored.tagsToIgnore || DEFAULT_SETTINGS.tagsToIgnore;
 }
 
 async function saveOptions() {
@@ -86,18 +90,21 @@ async function saveOptions() {
     50,
     DEFAULT_SETTINGS.maxTicketsToSpeak
   );
+  const tagsToIgnore = fields.tagsToIgnore.value.trim();
 
   fields.voiceSignalThreshold.value = String(voiceSignalThreshold);
   fields.scoringMode.value = scoringMode;
   fields.absoluteScaleMaxDays.value = String(absoluteScaleMaxDays);
   fields.maxTicketsToSpeak.value = String(maxTicketsToSpeak);
+  fields.tagsToIgnore.value = tagsToIgnore;
 
   await chrome.storage.sync.set({
     adoPat,
     voiceSignalThreshold,
     scoringMode,
     absoluteScaleMaxDays,
-    maxTicketsToSpeak
+    maxTicketsToSpeak,
+    tagsToIgnore
   });
 
   setStatus('Saved.');

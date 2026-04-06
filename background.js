@@ -46,7 +46,8 @@ async function getRuntimeSettings() {
     'voiceSignalThreshold',
     'scoringMode',
     'absoluteScaleMaxDays',
-    'maxTicketsToSpeak'
+    'maxTicketsToSpeak',
+    'tagsToIgnore'
   ]);
 
   const voiceSignalThreshold = clampNumber(
@@ -74,13 +75,15 @@ async function getRuntimeSettings() {
   );
 
   const adoPat = (stored.adoPat || '').trim();
+  const tagsToIgnore = (stored.tagsToIgnore || '').trim();
 
   return {
     adoPat,
     voiceSignalThreshold,
     scoringMode,
     absoluteScaleMaxDays,
-    maxTicketsToSpeak
+    maxTicketsToSpeak,
+    tagsToIgnore
   };
 }
 
@@ -718,6 +721,44 @@ async function previousTicket() {
   return { ok: true, index: prevIndex };
 }
 
+function filterItemsByTags(items, tagsToIgnore) {
+  if (!tagsToIgnore || !tagsToIgnore.trim()) {
+    return items;
+  }
+
+  // Parse the comma-separated tags to ignore into an array (lowercase, trimmed)
+  const ignoredTags = tagsToIgnore
+    .split(',')
+    .map(tag => tag.trim().toLowerCase())
+    .filter(tag => tag.length > 0);
+
+  if (ignoredTags.length === 0) {
+    return items;
+  }
+
+  // Filter out items that have ANY of the ignored tags
+  return items.filter(item => {
+    const itemTags = item.fields['System.Tags'];
+    
+    if (!itemTags) {
+      return true; // No tags on item, so keep it
+    }
+
+    // Azure DevOps tags are semicolon-separated
+    const itemTagArray = itemTags
+      .split(';')
+      .map(tag => tag.trim().toLowerCase())
+      .filter(tag => tag.length > 0);
+
+    // Check if ANY ignored tag matches ANY item tag (OR logic)
+    const hasIgnoredTag = itemTagArray.some(itemTag => 
+      ignoredTags.includes(itemTag)
+    );
+
+    return !hasIgnoredTag; // Keep if no ignored tags found
+  });
+}
+
 async function loadChatterBoard({ tabId, url }) {
   if (runState.isQueueLoaded) {
     throw new Error('Queue already loaded. Clear first.');
@@ -782,15 +823,27 @@ async function loadChatterBoard({ tabId, url }) {
       ids
     });
 
+    // Filter out items with tags to ignore
+    const filteredItems = filterItemsByTags(items, settings.tagsToIgnore);
+
+    if (!filteredItems.length) {
+      setRunState({
+        isQueueLoaded: false,
+        statusMessage: 'All visible work items were filtered out by tag exclusions.'
+      });
+      await speak('All work items were filtered out.');
+      return { ok: true, count: 0 };
+    }
+
     const timeInColumnElapsedMap = await buildTimeInColumnElapsedMap({
       org: parsed.org,
       project: parsed.project,
       adoPat,
-      items
+      items: filteredItems
     });
 
     const entries = buildSignalEntries(
-      items,
+      filteredItems,
       timeInColumnElapsedMap,
       scoringMode,
       absoluteScaleMaxDays
