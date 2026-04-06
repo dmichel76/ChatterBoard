@@ -1,6 +1,5 @@
 const DEFAULT_SETTINGS = {
   adoPat: '',
-  voiceSignalThreshold: 75,
   scoringMode: 'relative',
   absoluteScaleMaxDays: 30,
   maxTicketsToSpeak: 5,
@@ -9,7 +8,6 @@ const DEFAULT_SETTINGS = {
 
 const fields = {
   adoPat: document.getElementById('adoPat'),
-  voiceSignalThreshold: document.getElementById('voiceSignalThreshold'),
   scoringMode: document.getElementById('scoringMode'),
   absoluteScaleMaxDays: document.getElementById('absoluteScaleMaxDays'),
   maxTicketsToSpeak: document.getElementById('maxTicketsToSpeak'),
@@ -39,7 +37,6 @@ function normaliseScoringMode(value) {
 async function loadOptions() {
   const stored = await chrome.storage.sync.get([
     'adoPat',
-    'voiceSignalThreshold',
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
@@ -47,12 +44,6 @@ async function loadOptions() {
   ]);
 
   fields.adoPat.value = stored.adoPat || DEFAULT_SETTINGS.adoPat;
-  fields.voiceSignalThreshold.value = clampNumber(
-    stored.voiceSignalThreshold,
-    0,
-    100,
-    DEFAULT_SETTINGS.voiceSignalThreshold
-  );
   fields.scoringMode.value = normaliseScoringMode(stored.scoringMode);
   fields.absoluteScaleMaxDays.value = clampNumber(
     stored.absoluteScaleMaxDays,
@@ -71,12 +62,6 @@ async function loadOptions() {
 
 async function saveOptions() {
   const adoPat = fields.adoPat.value.trim();
-  const voiceSignalThreshold = clampNumber(
-    fields.voiceSignalThreshold.value,
-    0,
-    100,
-    DEFAULT_SETTINGS.voiceSignalThreshold
-  );
   const scoringMode = normaliseScoringMode(fields.scoringMode.value);
   const absoluteScaleMaxDays = clampNumber(
     fields.absoluteScaleMaxDays.value,
@@ -92,7 +77,6 @@ async function saveOptions() {
   );
   const tagsToIgnore = fields.tagsToIgnore.value.trim();
 
-  fields.voiceSignalThreshold.value = String(voiceSignalThreshold);
   fields.scoringMode.value = scoringMode;
   fields.absoluteScaleMaxDays.value = String(absoluteScaleMaxDays);
   fields.maxTicketsToSpeak.value = String(maxTicketsToSpeak);
@@ -100,7 +84,6 @@ async function saveOptions() {
 
   await chrome.storage.sync.set({
     adoPat,
-    voiceSignalThreshold,
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,

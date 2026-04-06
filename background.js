@@ -1,9 +1,13 @@
-const DEFAULT_VOICE_SIGNAL_THRESHOLD = 75;
 const DEFAULT_MAX_TICKETS_TO_SPEAK = 5;
 const DEFAULT_SCORING_MODE = 'relative';
 const DEFAULT_ABSOLUTE_SCALE_MAX_DAYS = 30;
 const WORK_ITEM_BATCH_SIZE = 200;
 const WORK_ITEM_REVISIONS_TOP = 200;
+
+const sentencesCache = {
+  lastUpdated: null,
+  timeInColumn: null
+};
 
 const runState = {
   isQueueLoaded: false,
@@ -43,19 +47,11 @@ function broadcastState() {
 async function getRuntimeSettings() {
   const stored = await chrome.storage.sync.get([
     'adoPat',
-    'voiceSignalThreshold',
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
     'tagsToIgnore'
   ]);
-
-  const voiceSignalThreshold = clampNumber(
-    stored.voiceSignalThreshold,
-    0,
-    100,
-    DEFAULT_VOICE_SIGNAL_THRESHOLD
-  );
 
   const maxTicketsToSpeak = clampNumber(
     stored.maxTicketsToSpeak,
@@ -79,7 +75,6 @@ async function getRuntimeSettings() {
 
   return {
     adoPat,
-    voiceSignalThreshold,
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,
@@ -534,9 +529,9 @@ function buildSignalEntries(items, timeInColumnElapsedMap, scoringMode, absolute
   });
 }
 
-function getVoiceEligibleSignals(entry, voiceSignalThreshold) {
+function getAvailableSignalsSorted(entry) {
   return Object.values(entry.signals)
-    .filter((signal) => signal.isAvailable && Number(signal.score) >= voiceSignalThreshold)
+    .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
     .sort((a, b) => {
       const scoreDiff = (b.score || 0) - (a.score || 0);
       if (scoreDiff !== 0) {
@@ -552,27 +547,9 @@ function getVoiceEligibleSignals(entry, voiceSignalThreshold) {
     });
 }
 
-function getPrimarySignal(entry, voiceSignalThreshold) {
-  const voiceEligible = getVoiceEligibleSignals(entry, voiceSignalThreshold);
-  if (voiceEligible.length) {
-    return voiceEligible[0];
-  }
-
-  return Object.values(entry.signals)
-    .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
-    .sort((a, b) => {
-      const scoreDiff = (b.score || 0) - (a.score || 0);
-      if (scoreDiff !== 0) {
-        return scoreDiff;
-      }
-
-      const durationDiff = (b.durationMs || 0) - (a.durationMs || 0);
-      if (durationDiff !== 0) {
-        return durationDiff;
-      }
-
-      return 0;
-    })[0] || entry.signals.lastUpdated;
+function getPrimarySignal(entry) {
+  const availableSignals = getAvailableSignalsSorted(entry);
+  return availableSignals[0] || entry.signals.lastUpdated;
 }
 
 function buildReasonFromSignal(signal) {
@@ -583,27 +560,88 @@ function buildReasonFromSignal(signal) {
   return `Last updated ${signal.rawValue} ago`;
 }
 
-function buildVoiceSentenceFromSignal(signal) {
-  if (signal.key === 'timeInColumn') {
-    return `I have been stuck in this column for ${signal.speechValue}.`;
+async function loadSentencesForSignal(signalKey) {
+  if (sentencesCache[signalKey]) {
+    return sentencesCache[signalKey];
   }
 
-  return `Nobody has touched me for ${signal.speechValue}.`;
+  try {
+    const url = chrome.runtime.getURL(`sentences/${signalKey}.txt`);
+    const response = await fetch(url);
+    const text = await response.text();
+    const lines = text.split('\n').filter(line => line.trim().length > 0);
+    
+    sentencesCache[signalKey] = lines;
+    return lines;
+  } catch (error) {
+    console.error(`Failed to load sentences for ${signalKey}:`, error);
+    // Fallback to hardcoded sentences
+    if (signalKey === 'timeInColumn') {
+      return ['I have been stuck in this column for {duration}.'];
+    }
+    return ['Nobody has touched me for {duration}.'];
+  }
 }
 
-function buildSpeechFromSignals(signals, title) {
-  const complaintSentences = signals.map((signal) => buildVoiceSentenceFromSignal(signal));
+function getToneCategory(frustrationScore) {
+  if (frustrationScore <= 30) {
+    return 'calm'; // lines 0-2 (indices 0, 1, 2)
+  }
+  if (frustrationScore <= 70) {
+    return 'cheeky'; // lines 3-6 (indices 3, 4, 5, 6)
+  }
+  return 'serious'; // lines 7-9 (indices 7, 8, 9)
+}
+
+function getRandomSentenceForTone(sentences, tone) {
+  let startIndex, endIndex;
+  
+  if (tone === 'calm') {
+    startIndex = 0;
+    endIndex = 2;
+  } else if (tone === 'cheeky') {
+    startIndex = 3;
+    endIndex = 6;
+  } else { // serious
+    startIndex = 7;
+    endIndex = 9;
+  }
+  
+  // Ensure we don't go out of bounds
+  endIndex = Math.min(endIndex, sentences.length - 1);
+  startIndex = Math.min(startIndex, sentences.length - 1);
+  
+  const range = endIndex - startIndex + 1;
+  const randomOffset = Math.floor(Math.random() * range);
+  const selectedIndex = startIndex + randomOffset;
+  
+  return sentences[selectedIndex];
+}
+
+async function buildVoiceSentenceFromSignal(signal, frustrationScore) {
+  const sentences = await loadSentencesForSignal(signal.key);
+  const tone = getToneCategory(frustrationScore);
+  const template = getRandomSentenceForTone(sentences, tone);
+  
+  // Replace {duration} placeholder with the actual speech value
+  return template.replace('{duration}', signal.speechValue);
+}
+
+async function buildSpeechFromSignals(signals, title, frustrationScore) {
+  const complaintSentences = await Promise.all(
+    signals.map((signal) => buildVoiceSentenceFromSignal(signal, frustrationScore))
+  );
   return [title, ...complaintSentences].join(' ');
 }
 
-function sortEntriesForPlayback(entries, voiceSignalThreshold) {
+function sortEntriesForPlayback(entries) {
   return [...entries].sort((a, b) => {
     if (b.frustrationScore !== a.frustrationScore) {
       return b.frustrationScore - a.frustrationScore;
     }
 
-    const aPrimary = getPrimarySignal(a, voiceSignalThreshold);
-    const bPrimary = getPrimarySignal(b, voiceSignalThreshold);
+    const aPrimary = getPrimarySignal(a);
+    const bPrimary = getPrimarySignal(b);
 
     if ((bPrimary.score || 0) !== (aPrimary.score || 0)) {
       return (bPrimary.score || 0) - (aPrimary.score || 0);
@@ -617,7 +655,7 @@ function sortEntriesForPlayback(entries, voiceSignalThreshold) {
   });
 }
 
-async function navigateToTicket(index, voiceSignalThreshold) {
+async function navigateToTicket(index) {
   if (index < 0 || index >= runState.queue.length) {
     throw new Error('Invalid queue index.');
   }
@@ -628,21 +666,9 @@ async function navigateToTicket(index, voiceSignalThreshold) {
   const id = entry.item.id;
   const title = entry.item.fields['System.Title'] || 'Untitled work item';
   
-  // Get voice-eligible signals (above threshold), or fall back to all available signals
-  let voiceSignals = getVoiceEligibleSignals(entry, voiceSignalThreshold);
-  if (voiceSignals.length === 0) {
-    voiceSignals = Object.values(entry.signals)
-      .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
-      .sort((a, b) => {
-        const scoreDiff = (b.score || 0) - (a.score || 0);
-        if (scoreDiff !== 0) return scoreDiff;
-        const durationDiff = (b.durationMs || 0) - (a.durationMs || 0);
-        if (durationDiff !== 0) return durationDiff;
-        return 0;
-      });
-  }
-  
-  const primarySignal = voiceSignals[0] || getPrimarySignal(entry, voiceSignalThreshold);
+  // Get all available signals sorted by score and duration
+  const voiceSignals = getAvailableSignalsSorted(entry);
+  const primarySignal = getPrimarySignal(entry);
 
   setRunState({
     currentQueueIndex: index,
@@ -686,7 +712,8 @@ async function navigateToTicket(index, voiceSignalThreshold) {
     console.warn('Highlight failed', id, error);
   }
 
-  await speak(buildSpeechFromSignals(voiceSignals, title));
+  const speechText = await buildSpeechFromSignals(voiceSignals, title, entry.frustrationScore);
+  await speak(speechText);
 }
 
 async function nextTicket() {
@@ -700,8 +727,7 @@ async function nextTicket() {
     throw new Error('Already at last ticket.');
   }
 
-  const settings = await getRuntimeSettings();
-  await navigateToTicket(nextIndex, settings.voiceSignalThreshold);
+  await navigateToTicket(nextIndex);
   return { ok: true, index: nextIndex };
 }
 
@@ -716,8 +742,7 @@ async function previousTicket() {
     throw new Error('Already at first ticket.');
   }
 
-  const settings = await getRuntimeSettings();
-  await navigateToTicket(prevIndex, settings.voiceSignalThreshold);
+  await navigateToTicket(prevIndex);
   return { ok: true, index: prevIndex };
 }
 
@@ -782,7 +807,6 @@ async function loadChatterBoard({ tabId, url }) {
     const settings = await getRuntimeSettings();
     const {
       adoPat,
-      voiceSignalThreshold,
       scoringMode,
       absoluteScaleMaxDays,
       maxTicketsToSpeak
@@ -849,7 +873,7 @@ async function loadChatterBoard({ tabId, url }) {
       absoluteScaleMaxDays
     );
 
-    const sortedEntries = sortEntriesForPlayback(entries, voiceSignalThreshold);
+    const sortedEntries = sortEntriesForPlayback(entries);
     const selected = sortedEntries.slice(0, maxTicketsToSpeak);
 
     if (!selected.length) {
@@ -866,7 +890,7 @@ async function loadChatterBoard({ tabId, url }) {
       currentQueueIndex: -1
     });
 
-    await navigateToTicket(0, voiceSignalThreshold);
+    await navigateToTicket(0);
     
     return { ok: true, count: selected.length };
   } catch (error) {

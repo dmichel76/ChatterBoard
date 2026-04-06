@@ -1,0 +1,10 @@
+I haven't been updated in {duration}. Just checking in!
+It's been {duration} since anyone looked at me. No rush though.
+{duration} since my last update. Still here, patiently waiting.
+Nobody has touched me for {duration}. Starting to feel a bit neglected here.
+{duration} without an update. Am I invisible or something?
+It's been {duration} since someone cared. Feeling a little forgotten, not gonna lie.
+I've been sitting here for {duration} without any love. Hello? Anyone?
+{duration} of radio silence. Is this thing even on anymore?
+{duration} since my last update. This is getting ridiculous.
+Nobody has touched me for {duration}. This is completely unacceptable.
