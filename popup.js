@@ -11,6 +11,10 @@ const lastUpdatedLabelEl = document.getElementById('lastUpdatedLabel');
 const lastUpdatedRawValueEl = document.getElementById('lastUpdatedRawValue');
 const lastUpdatedBarEl = document.getElementById('lastUpdatedBar');
 
+const timeInColumnLabelEl = document.getElementById('timeInColumnLabel');
+const timeInColumnRawValueEl = document.getElementById('timeInColumnRawValue');
+const timeInColumnBarEl = document.getElementById('timeInColumnBar');
+
 function setStatus(message) {
   statusEl.textContent = message;
 }
@@ -33,11 +37,34 @@ function getScoreColor(score) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function resetSignalDisplay() {
-  lastUpdatedLabelEl.textContent = 'Last updated';
-  lastUpdatedRawValueEl.textContent = '-';
-  lastUpdatedBarEl.style.width = '0%';
-  lastUpdatedBarEl.style.background = getScoreColor(0);
+function resetSignalDisplay(labelEl, rawValueEl, barEl, defaultLabel) {
+  labelEl.textContent = defaultLabel;
+  rawValueEl.textContent = '-';
+  barEl.style.width = '0%';
+  barEl.style.background = getScoreColor(0);
+  barEl.classList.remove('unavailable');
+}
+
+function applySignalDisplay({ labelEl, rawValueEl, barEl, signal, defaultLabel }) {
+  if (!signal) {
+    resetSignalDisplay(labelEl, rawValueEl, barEl, defaultLabel);
+    return;
+  }
+
+  labelEl.textContent = signal.label || defaultLabel;
+  rawValueEl.textContent = signal.rawValue || '-';
+
+  if (signal.isAvailable === false || !Number.isFinite(Number(signal.score))) {
+    barEl.style.width = '100%';
+    barEl.style.background = '#cfcfcf';
+    barEl.classList.add('unavailable');
+    return;
+  }
+
+  const score = Math.max(0, Math.min(100, Number(signal.score) || 0));
+  barEl.style.width = `${score}%`;
+  barEl.style.background = getScoreColor(score);
+  barEl.classList.remove('unavailable');
 }
 
 function setCurrentTicket(ticket) {
@@ -45,7 +72,8 @@ function setCurrentTicket(ticket) {
     frustrationScoreEl.textContent = '-';
     currentTicketTitleEl.textContent = '-';
     currentTicketReasonEl.textContent = '-';
-    resetSignalDisplay();
+    resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
+    resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
     nowReadingPanelEl.classList.add('hidden');
     return;
   }
@@ -57,16 +85,21 @@ function setCurrentTicket(ticket) {
   currentTicketTitleEl.textContent = ticket.title ?? '-';
   currentTicketReasonEl.textContent = ticket.reason ?? '-';
 
-  const lastUpdated = ticket.signals?.lastUpdated;
-  if (lastUpdated) {
-    const score = Math.max(0, Math.min(100, Number(lastUpdated.score) || 0));
-    lastUpdatedLabelEl.textContent = lastUpdated.label || 'Last updated';
-    lastUpdatedRawValueEl.textContent = lastUpdated.rawValue || '-';
-    lastUpdatedBarEl.style.width = `${score}%`;
-    lastUpdatedBarEl.style.background = getScoreColor(score);
-  } else {
-    resetSignalDisplay();
-  }
+  applySignalDisplay({
+    labelEl: lastUpdatedLabelEl,
+    rawValueEl: lastUpdatedRawValueEl,
+    barEl: lastUpdatedBarEl,
+    signal: ticket.signals?.lastUpdated,
+    defaultLabel: 'Last updated'
+  });
+
+  applySignalDisplay({
+    labelEl: timeInColumnLabelEl,
+    rawValueEl: timeInColumnRawValueEl,
+    barEl: timeInColumnBarEl,
+    signal: ticket.signals?.timeInColumn,
+    defaultLabel: 'Time in column'
+  });
 
   nowReadingPanelEl.classList.remove('hidden');
 }
@@ -162,5 +195,6 @@ stopButton.addEventListener('click', async () => {
   }
 });
 
-resetSignalDisplay();
+resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
+resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
 loadState();

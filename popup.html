@@ -133,6 +133,11 @@
       border-radius: 999px;
       transition: width 0.2s ease;
     }
+
+    .signal-fill.unavailable {
+      width: 100% !important;
+      background: #cfcfcf !important;
+    }
   </style>
 </head>
 <body>
@@ -168,6 +173,16 @@
       </div>
       <div class="signal-track">
         <div id="lastUpdatedBar" class="signal-fill"></div>
+      </div>
+    </div>
+
+    <div class="signal-group">
+      <div class="signal-row">
+        <span id="timeInColumnLabel" class="signal-label">Time in column</span>
+        <span id="timeInColumnRawValue" class="signal-raw-value">-</span>
+      </div>
+      <div class="signal-track">
+        <div id="timeInColumnBar" class="signal-fill"></div>
       </div>
     </div>
   </div>

@@ -1,5 +1,7 @@
 const MAX_TICKETS_TO_SPEAK = 5;
 const WORK_ITEM_BATCH_SIZE = 200;
+const WORK_ITEM_REVISIONS_TOP = 200;
+const VOICE_SIGNAL_THRESHOLD = 75;
 
 const runState = {
   isRunning: false,
@@ -103,6 +105,26 @@ async function fetchWorkItemsBatch({ org, project, adoPat, ids }) {
   return response.json();
 }
 
+async function fetchWorkItemRevisions({ org, project, adoPat, id }) {
+  const response = await fetch(
+    `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_apis/wit/workitems/${encodeURIComponent(id)}/revisions?$top=${WORK_ITEM_REVISIONS_TOP}&api-version=7.0`,
+    {
+      headers: {
+        Authorization: 'Basic ' + btoa(':' + adoPat)
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `ADO revisions failed for ${id}: ${response.status} ${response.statusText} - ${body}`
+    );
+  }
+
+  return response.json();
+}
+
 function chunkArray(items, size) {
   const chunks = [];
 
@@ -181,12 +203,12 @@ function getElapsedMsSinceChanged(item) {
   const changedDate = item.fields['System.ChangedDate'];
 
   if (!changedDate) {
-    return 0;
+    return null;
   }
 
   const changedTime = new Date(changedDate).getTime();
   if (Number.isNaN(changedTime)) {
-    return 0;
+    return null;
   }
 
   return Math.max(0, Date.now() - changedTime);
@@ -195,6 +217,10 @@ function getElapsedMsSinceChanged(item) {
 function formatDurationShort(durationMs) {
   const hourMs = 1000 * 60 * 60;
   const dayMs = hourMs * 24;
+
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return 'Unknown';
+  }
 
   if (durationMs < hourMs) {
     return 'just now';
@@ -220,25 +246,33 @@ function formatDurationForSpeech(durationMs) {
   const hourMs = 1000 * 60 * 60;
   const dayMs = hourMs * 24;
 
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return 'an unknown amount of time';
+  }
+
   if (durationMs < hourMs) {
     return 'just now';
   }
 
   if (durationMs < dayMs) {
     const hours = Math.max(1, Math.round(durationMs / hourMs));
-    return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    return `${hours} hour${hours === 1 ? '' : 's'}`;
   }
 
   const days = Math.max(1, Math.round(durationMs / dayMs));
-  return `${days} day${days === 1 ? '' : 's'} ago`;
+  return `${days} day${days === 1 ? '' : 's'}`;
 }
 
-function normaliseValueToScore(value, minValue, maxValue) {
-  if (maxValue <= minValue) {
+function normaliseDurationToScore(durationMs, globalMaxDurationMs) {
+  if (!Number.isFinite(durationMs)) {
+    return null;
+  }
+
+  if (!Number.isFinite(globalMaxDurationMs) || globalMaxDurationMs <= 0) {
     return 50;
   }
 
-  const raw = ((value - minValue) / (maxValue - minValue)) * 100;
+  const raw = (durationMs / globalMaxDurationMs) * 100;
   const clamped = Math.max(0, Math.min(100, raw));
   return Math.round(clamped);
 }
@@ -248,31 +282,239 @@ async function getActiveVisibleTicketIds(tabId) {
     type: 'GET_ACTIVE_VISIBLE_TICKET_IDS'
   });
 
-  return (response?.ids || []).map((id) => Number(id)).filter((id) => Number.isFinite(id));
+  return (response?.ids || [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id));
 }
 
-function buildLastUpdatedSignalEntries(items) {
-  const elapsedValues = items.map((item) => getElapsedMsSinceChanged(item));
-  const minElapsedMs = Math.min(...elapsedValues);
-  const maxElapsedMs = Math.max(...elapsedValues);
+function getChangedTimeFromFields(fields) {
+  const changedDate = fields?.['System.ChangedDate'];
+  if (!changedDate) {
+    return null;
+  }
 
-  return items.map((item) => {
-    const elapsedMs = getElapsedMsSinceChanged(item);
-    const normalisedScore = normaliseValueToScore(elapsedMs, minElapsedMs, maxElapsedMs);
+  const changedTime = new Date(changedDate).getTime();
+  return Number.isNaN(changedTime) ? null : changedTime;
+}
+
+function getBoardColumnFromFields(fields) {
+  return fields?.['System.BoardColumn'] ?? null;
+}
+
+async function getElapsedMsSinceEnteredCurrentColumn({ org, project, adoPat, item }) {
+  const currentColumn = getBoardColumnFromFields(item.fields);
+  if (!currentColumn) {
+    return null;
+  }
+
+  const revisionsData = await fetchWorkItemRevisions({
+    org,
+    project,
+    adoPat,
+    id: item.id
+  });
+
+  const revisions = revisionsData.value || [];
+  if (!revisions.length) {
+    return null;
+  }
+
+  for (let i = revisions.length - 1; i >= 0; i -= 1) {
+    const revisionColumn = getBoardColumnFromFields(revisions[i].fields);
+
+    if (revisionColumn !== currentColumn) {
+      const entryRevision = revisions[i + 1];
+      const entryTime = getChangedTimeFromFields(entryRevision?.fields);
+      if (entryTime == null) {
+        return null;
+      }
+
+      return Math.max(0, Date.now() - entryTime);
+    }
+  }
+
+  const firstMatchingRevision = revisions.find(
+    (revision) => getBoardColumnFromFields(revision.fields) === currentColumn
+  );
+
+  const firstMatchingTime = getChangedTimeFromFields(firstMatchingRevision?.fields);
+  if (firstMatchingTime == null) {
+    return null;
+  }
+
+  return Math.max(0, Date.now() - firstMatchingTime);
+}
+
+async function buildTimeInColumnElapsedMap({ org, project, adoPat, items }) {
+  const elapsedMap = new Map();
+
+  for (let index = 0; index < items.length; index += 1) {
+    ensureNotStopped();
+
+    const item = items[index];
+
+    setRunState({
+      statusMessage: `Reading column history ${index + 1}/${items.length}...`
+    });
+
+    try {
+      const elapsedMs = await getElapsedMsSinceEnteredCurrentColumn({
+        org,
+        project,
+        adoPat,
+        item
+      });
+
+      elapsedMap.set(item.id, elapsedMs);
+    } catch (error) {
+      console.warn(`Could not get time-in-column for work item ${item.id}`, error);
+      elapsedMap.set(item.id, null);
+    }
+  }
+
+  return elapsedMap;
+}
+
+function getSignalDefinitions(item, timeInColumnElapsedMap) {
+  const lastUpdatedDurationMs = getElapsedMsSinceChanged(item);
+  const timeInColumnDurationMs = timeInColumnElapsedMap.get(item.id);
+
+  return {
+    lastUpdated: {
+      key: 'lastUpdated',
+      label: 'Last updated',
+      durationMs: lastUpdatedDurationMs,
+      rawValue: formatDurationShort(lastUpdatedDurationMs),
+      speechValue: formatDurationForSpeech(lastUpdatedDurationMs),
+      isAvailable: Number.isFinite(lastUpdatedDurationMs)
+    },
+    timeInColumn: {
+      key: 'timeInColumn',
+      label: 'Time in column',
+      durationMs: timeInColumnDurationMs,
+      rawValue: Number.isFinite(timeInColumnDurationMs)
+        ? formatDurationShort(timeInColumnDurationMs)
+        : 'Unknown',
+      speechValue: Number.isFinite(timeInColumnDurationMs)
+        ? formatDurationForSpeech(timeInColumnDurationMs)
+        : null,
+      isAvailable: Number.isFinite(timeInColumnDurationMs)
+    }
+  };
+}
+
+function getGlobalMaxDurationMs(signalDefinitionsByItem) {
+  const allDurations = signalDefinitionsByItem.flatMap((signalSet) =>
+    Object.values(signalSet)
+      .filter((signal) => signal.isAvailable && Number.isFinite(signal.durationMs))
+      .map((signal) => signal.durationMs)
+  );
+
+  if (!allDurations.length) {
+    return null;
+  }
+
+  return Math.max(...allDurations);
+}
+
+function buildSignalEntries(items, timeInColumnElapsedMap) {
+  const signalDefinitionsByItem = items.map((item) =>
+    getSignalDefinitions(item, timeInColumnElapsedMap)
+  );
+
+  const globalMaxDurationMs = getGlobalMaxDurationMs(signalDefinitionsByItem);
+
+  return items.map((item, index) => {
+    const baseSignals = signalDefinitionsByItem[index];
+
+    const signals = Object.fromEntries(
+      Object.entries(baseSignals).map(([key, signal]) => {
+        const score = signal.isAvailable
+          ? normaliseDurationToScore(signal.durationMs, globalMaxDurationMs)
+          : null;
+
+        return [
+          key,
+          {
+            ...signal,
+            score
+          }
+        ];
+      })
+    );
+
+    const frustrationScore = Object.values(signals)
+      .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
+      .reduce((sum, signal) => sum + signal.score, 0);
 
     return {
       item,
-      signals: {
-        lastUpdated: {
-          label: 'Last updated',
-          rawValue: formatDurationShort(elapsedMs),
-          speechValue: formatDurationForSpeech(elapsedMs),
-          normalisedScore
-        }
-      },
-      frustrationScore: normalisedScore
+      signals,
+      frustrationScore
     };
   });
+}
+
+function getVoiceEligibleSignals(entry) {
+  return Object.values(entry.signals)
+    .filter((signal) => signal.isAvailable && Number(signal.score) >= VOICE_SIGNAL_THRESHOLD)
+    .sort((a, b) => {
+      const scoreDiff = (b.score || 0) - (a.score || 0);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+
+      const durationDiff = (b.durationMs || 0) - (a.durationMs || 0);
+      if (durationDiff !== 0) {
+        return durationDiff;
+      }
+
+      return 0;
+    });
+}
+
+function getPrimarySignal(entry) {
+  const voiceEligible = getVoiceEligibleSignals(entry);
+  if (voiceEligible.length) {
+    return voiceEligible[0];
+  }
+
+  return Object.values(entry.signals)
+    .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
+    .sort((a, b) => {
+      const scoreDiff = (b.score || 0) - (a.score || 0);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+
+      const durationDiff = (b.durationMs || 0) - (a.durationMs || 0);
+      if (durationDiff !== 0) {
+        return durationDiff;
+      }
+
+      return 0;
+    })[0] || entry.signals.lastUpdated;
+}
+
+function buildReasonFromSignal(signal) {
+  if (signal.key === 'timeInColumn') {
+    return `In this column for ${signal.rawValue}`;
+  }
+
+  return `Last updated ${signal.rawValue} ago`;
+}
+
+function buildVoiceSentenceFromSignal(signal) {
+  if (signal.key === 'timeInColumn') {
+    return `I have been stuck in this column for ${signal.speechValue}.`;
+  }
+
+  return `Nobody has touched me for ${signal.speechValue}.`;
+}
+
+function buildSpeechFromSignals(signals, title) {
+  const complaintSentences = signals.map((signal) => buildVoiceSentenceFromSignal(signal));
+  return [...complaintSentences, title].join(' ');
 }
 
 function sortEntriesForPlayback(entries) {
@@ -281,11 +523,15 @@ function sortEntriesForPlayback(entries) {
       return b.frustrationScore - a.frustrationScore;
     }
 
-    const aElapsed = getElapsedMsSinceChanged(a.item);
-    const bElapsed = getElapsedMsSinceChanged(b.item);
+    const aPrimary = getPrimarySignal(a);
+    const bPrimary = getPrimarySignal(b);
 
-    if (bElapsed !== aElapsed) {
-      return bElapsed - aElapsed;
+    if ((bPrimary.score || 0) !== (aPrimary.score || 0)) {
+      return (bPrimary.score || 0) - (aPrimary.score || 0);
+    }
+
+    if ((bPrimary.durationMs || 0) !== (aPrimary.durationMs || 0)) {
+      return (bPrimary.durationMs || 0) - (aPrimary.durationMs || 0);
     }
 
     return Number(a.item.id) - Number(b.item.id);
@@ -352,29 +598,53 @@ async function runChatterBoard({ tabId, url }) {
 
     ensureNotStopped();
 
-    const entries = buildLastUpdatedSignalEntries(items);
-    const sortedEntries = sortEntriesForPlayback(entries);
+    const timeInColumnElapsedMap = await buildTimeInColumnElapsedMap({
+      org: parsed.org,
+      project: parsed.project,
+      adoPat,
+      items
+    });
+
+    ensureNotStopped();
+
+    const entries = buildSignalEntries(items, timeInColumnElapsedMap);
+    const speakingEntries = entries.filter((entry) => getVoiceEligibleSignals(entry).length > 0);
+    const sortedEntries = sortEntriesForPlayback(speakingEntries);
     const selected = sortedEntries.slice(0, MAX_TICKETS_TO_SPEAK);
+
+    if (!selected.length) {
+      setRunState({
+        statusMessage: 'No tickets met the voice threshold.'
+      });
+      return { ok: true, count: 0 };
+    }
 
     for (const entry of selected) {
       ensureNotStopped();
 
       const id = entry.item.id;
       const title = entry.item.fields['System.Title'] || 'Untitled work item';
-      const lastUpdated = entry.signals.lastUpdated;
+      const voiceSignals = getVoiceEligibleSignals(entry);
+      const primarySignal = voiceSignals[0] || getPrimarySignal(entry);
 
       setRunState({
         currentHighlightedTicketId: id,
         currentTicket: {
-          id,
           title,
-          reason: `Last updated ${lastUpdated.rawValue} ago`,
+          reason: buildReasonFromSignal(primarySignal),
           frustrationScore: entry.frustrationScore,
           signals: {
             lastUpdated: {
-              label: lastUpdated.label,
-              rawValue: lastUpdated.rawValue,
-              score: lastUpdated.normalisedScore
+              label: entry.signals.lastUpdated.label,
+              rawValue: entry.signals.lastUpdated.rawValue,
+              score: entry.signals.lastUpdated.score,
+              isAvailable: entry.signals.lastUpdated.isAvailable
+            },
+            timeInColumn: {
+              label: entry.signals.timeInColumn.label,
+              rawValue: entry.signals.timeInColumn.rawValue,
+              score: entry.signals.timeInColumn.score,
+              isAvailable: entry.signals.timeInColumn.isAvailable
             }
           }
         },
@@ -399,7 +669,7 @@ async function runChatterBoard({ tabId, url }) {
         console.warn('Highlight failed', id, error);
       }
 
-      await speak(`Last updated ${lastUpdated.speechValue}. ${title}`);
+      await speak(buildSpeechFromSignals(voiceSignals, title));
       ensureNotStopped();
 
       try {
