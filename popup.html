@@ -47,26 +47,6 @@
       white-space: pre-wrap;
     }
 
-    .scale-info {
-      margin-top: 10px;
-      padding: 8px 10px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      background: #f6f6f6;
-      font-size: 11px;
-      line-height: 1.4;
-    }
-
-    .scale-info.hidden {
-      display: none;
-    }
-
-    .scale-info-label {
-      font-weight: bold;
-      display: block;
-      margin-bottom: 2px;
-    }
-
     .now-reading {
       margin-top: 14px;
       padding: 10px;
@@ -78,11 +58,6 @@
 
     .now-reading.hidden {
       display: none;
-    }
-
-    .now-reading h2 {
-      font-size: 13px;
-      margin: 0 0 10px;
     }
 
     .frustration-label {
@@ -173,14 +148,7 @@
 
   <div id="status" class="status">Idle.</div>
 
-  <div id="scaleInfo" class="scale-info">
-    <span class="scale-info-label">Scoring scale</span>
-    <span id="scaleInfoValue">-</span>
-  </div>
-
   <div id="nowReadingPanel" class="now-reading hidden">
-    <h2>Now reading</h2>
-
     <div class="frustration-label">Frustration score</div>
     <div id="frustrationScore" class="frustration-score">-</div>
 
@@ -188,9 +156,6 @@
 
     <span class="field-label">Title</span>
     <span id="currentTicketTitle" class="field-value">-</span>
-
-    <span class="field-label">Reason</span>
-    <span id="currentTicketReason" class="field-value">-</span>
 
     <div class="signal-group">
       <div class="signal-row">

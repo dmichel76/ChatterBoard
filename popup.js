@@ -1,20 +1,11 @@
-const DEFAULT_SETTINGS = {
-  scoringMode: 'relative',
-  absoluteScaleMaxDays: 30
-};
-
 const statusEl = document.getElementById('status');
 const playButton = document.getElementById('playButton');
 const pauseButton = document.getElementById('pauseButton');
 const stopButton = document.getElementById('stopButton');
 
-const scaleInfoEl = document.getElementById('scaleInfo');
-const scaleInfoValueEl = document.getElementById('scaleInfoValue');
-
 const nowReadingPanelEl = document.getElementById('nowReadingPanel');
 const frustrationScoreEl = document.getElementById('frustrationScore');
 const currentTicketTitleEl = document.getElementById('currentTicketTitle');
-const currentTicketReasonEl = document.getElementById('currentTicketReason');
 
 const lastUpdatedLabelEl = document.getElementById('lastUpdatedLabel');
 const lastUpdatedRawValueEl = document.getElementById('lastUpdatedRawValue');
@@ -76,23 +67,95 @@ function applySignalDisplay({ labelEl, rawValueEl, barEl, signal, defaultLabel }
   barEl.classList.remove('unavailable');
 }
 
+function getFrustrationFaceIcon(score) {
+  if (!Number.isFinite(score)) {
+    return '-';
+  }
+
+  const clamped = Math.max(0, Math.min(100, Math.round(score)));
+  const level = Math.min(4, Math.floor(clamped / 20));
+
+  const faces = [
+    {
+      color: '#4CAF50',
+      label: 'Calm',
+      svg: `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="15" fill="#4CAF50" stroke="#2E7D32" stroke-width="2"/>
+        <circle cx="11" cy="12" r="2" fill="#1B5E20"/>
+        <circle cx="21" cy="12" r="2" fill="#1B5E20"/>
+        <path d="M 10 19 Q 16 24 22 19" stroke="#1B5E20" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>`
+    },
+    {
+      color: '#8BC34A',
+      label: 'Slightly Concerned',
+      svg: `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="15" fill="#8BC34A" stroke="#689F38" stroke-width="2"/>
+        <circle cx="11" cy="12" r="2" fill="#33691E"/>
+        <circle cx="21" cy="12" r="2" fill="#33691E"/>
+        <path d="M 10 20 Q 16 22 22 20" stroke="#33691E" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>`
+    },
+    {
+      color: '#FFC107',
+      label: 'Worried',
+      svg: `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="15" fill="#FFC107" stroke="#FFA000" stroke-width="2"/>
+        <circle cx="11" cy="12" r="2" fill="#F57F17"/>
+        <circle cx="21" cy="12" r="2" fill="#F57F17"/>
+        <line x1="10" y1="20" x2="22" y2="20" stroke="#F57F17" stroke-width="2" stroke-linecap="round"/>
+      </svg>`
+    },
+    {
+      color: '#FF9800',
+      label: 'Frustrated',
+      svg: `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="15" fill="#FF9800" stroke="#F57C00" stroke-width="2"/>
+        <line x1="8" y1="10" x2="12" y2="13" stroke="#E65100" stroke-width="2" stroke-linecap="round"/>
+        <line x1="20" y1="13" x2="24" y2="10" stroke="#E65100" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="11" cy="14" r="2" fill="#E65100"/>
+        <circle cx="21" cy="14" r="2" fill="#E65100"/>
+        <path d="M 10 23 Q 16 19 22 23" stroke="#E65100" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>`
+    },
+    {
+      color: '#F44336',
+      label: 'Angry',
+      svg: `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="15" fill="#F44336" stroke="#D32F2F" stroke-width="2"/>
+        <line x1="7" y1="10" x2="13" y2="13" stroke="#B71C1C" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="19" y1="13" x2="25" y2="10" stroke="#B71C1C" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="11" cy="14" r="2.5" fill="#B71C1C"/>
+        <circle cx="21" cy="14" r="2.5" fill="#B71C1C"/>
+        <path d="M 10 24 Q 16 20 22 24" stroke="#B71C1C" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      </svg>`
+    }
+  ];
+
+  return faces[level].svg;
+}
+
 function setCurrentTicket(ticket) {
   if (!ticket) {
-    frustrationScoreEl.textContent = '-';
+    frustrationScoreEl.innerHTML = '-';
+    frustrationScoreEl.removeAttribute('title');
     currentTicketTitleEl.textContent = '-';
-    currentTicketReasonEl.textContent = '-';
     resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
     resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
     nowReadingPanelEl.classList.add('hidden');
     return;
   }
 
-  frustrationScoreEl.textContent = Number.isFinite(ticket.frustrationScore)
-    ? String(Math.round(ticket.frustrationScore))
-    : '-';
+  if (Number.isFinite(ticket.frustrationScore)) {
+    const roundedScore = Math.round(ticket.frustrationScore);
+    frustrationScoreEl.innerHTML = getFrustrationFaceIcon(ticket.frustrationScore);
+    frustrationScoreEl.setAttribute('title', `Frustration score: ${roundedScore}`);
+  } else {
+    frustrationScoreEl.innerHTML = '-';
+    frustrationScoreEl.removeAttribute('title');
+  }
 
   currentTicketTitleEl.textContent = ticket.title ?? '-';
-  currentTicketReasonEl.textContent = ticket.reason ?? '-';
 
   applySignalDisplay({
     labelEl: lastUpdatedLabelEl,
@@ -111,32 +174,6 @@ function setCurrentTicket(ticket) {
   });
 
   nowReadingPanelEl.classList.remove('hidden');
-}
-
-function formatScaleInfo(settings) {
-  const scoringMode = settings?.scoringMode === 'absolute' ? 'absolute' : 'relative';
-  const absoluteScaleMaxDays = Number.isFinite(Number(settings?.absoluteScaleMaxDays))
-    ? Math.max(1, Math.round(Number(settings.absoluteScaleMaxDays)))
-    : DEFAULT_SETTINGS.absoluteScaleMaxDays;
-
-  if (scoringMode === 'absolute') {
-    return `Absolute, 100 = ${absoluteScaleMaxDays} day${absoluteScaleMaxDays === 1 ? '' : 's'}`;
-  }
-
-  return 'Relative, 100 = worst active visible duration on this board';
-}
-
-function setScaleInfo(settings) {
-  scaleInfoValueEl.textContent = formatScaleInfo(settings || DEFAULT_SETTINGS);
-  scaleInfoEl.classList.remove('hidden');
-}
-
-async function loadSettings() {
-  const stored = await chrome.storage.sync.get(['scoringMode', 'absoluteScaleMaxDays']);
-  setScaleInfo({
-    scoringMode: stored.scoringMode,
-    absoluteScaleMaxDays: stored.absoluteScaleMaxDays
-  });
 }
 
 function applyState(state) {
@@ -184,7 +221,6 @@ playButton.addEventListener('click', async () => {
   try {
     setStatus('Running...');
     setCurrentTicket(null);
-    await loadSettings();
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !tab.url) {
@@ -218,11 +254,11 @@ playButton.addEventListener('click', async () => {
       return;
     }
 
+    setCurrentTicket(null);
     setStatus(`Done. Spoke ${response.count} ticket(s).`);
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
-    await loadSettings();
     await loadState();
   }
 });
@@ -261,6 +297,7 @@ pauseButton.addEventListener('click', async () => {
         return;
       }
 
+      setCurrentTicket(null);
       setStatus(`Done. Spoke ${resumeResponse.count} ticket(s).`);
       return;
     }
@@ -298,12 +335,10 @@ stopButton.addEventListener('click', async () => {
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
-    await loadSettings();
     await loadState();
   }
 });
 
 resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
 resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
-loadSettings();
 loadState();

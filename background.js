@@ -736,6 +736,7 @@ async function playQueueFromCurrentState(voiceSignalThreshold) {
     isPaused: false,
     pauseRequested: false,
     currentHighlightedTicketId: null,
+    currentTicket: null,
     statusMessage: `Done. Spoke ${runState.currentQueueIndex} ticket(s).`
   });
 
