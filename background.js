@@ -516,9 +516,12 @@ function buildSignalEntries(items, timeInColumnElapsedMap, scoringMode, absolute
       })
     );
 
-    const frustrationScore = Object.values(signals)
-      .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
-      .reduce((sum, signal) => sum + signal.score, 0);
+    const availableSignals = Object.values(signals)
+      .filter((signal) => signal.isAvailable && Number.isFinite(signal.score));
+
+    const frustrationScore = availableSignals.length > 0
+      ? Math.round(availableSignals.reduce((sum, signal) => sum + signal.score, 0) / availableSignals.length)
+      : 0;
 
     return {
       item,
@@ -587,7 +590,7 @@ function buildVoiceSentenceFromSignal(signal) {
 
 function buildSpeechFromSignals(signals, title) {
   const complaintSentences = signals.map((signal) => buildVoiceSentenceFromSignal(signal));
-  return [...complaintSentences, title].join(' ');
+  return [title, ...complaintSentences].join(' ');
 }
 
 function sortEntriesForPlayback(entries, voiceSignalThreshold) {
@@ -621,7 +624,21 @@ async function navigateToTicket(index, voiceSignalThreshold) {
   const entry = runState.queue[index];
   const id = entry.item.id;
   const title = entry.item.fields['System.Title'] || 'Untitled work item';
-  const voiceSignals = getVoiceEligibleSignals(entry, voiceSignalThreshold);
+  
+  // Get voice-eligible signals (above threshold), or fall back to all available signals
+  let voiceSignals = getVoiceEligibleSignals(entry, voiceSignalThreshold);
+  if (voiceSignals.length === 0) {
+    voiceSignals = Object.values(entry.signals)
+      .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
+      .sort((a, b) => {
+        const scoreDiff = (b.score || 0) - (a.score || 0);
+        if (scoreDiff !== 0) return scoreDiff;
+        const durationDiff = (b.durationMs || 0) - (a.durationMs || 0);
+        if (durationDiff !== 0) return durationDiff;
+        return 0;
+      });
+  }
+  
   const primarySignal = voiceSignals[0] || getPrimarySignal(entry, voiceSignalThreshold);
 
   setRunState({
@@ -779,17 +796,13 @@ async function loadChatterBoard({ tabId, url }) {
       absoluteScaleMaxDays
     );
 
-    const speakingEntries = entries.filter(
-      (entry) => getVoiceEligibleSignals(entry, voiceSignalThreshold).length > 0
-    );
-
-    const sortedEntries = sortEntriesForPlayback(speakingEntries, voiceSignalThreshold);
+    const sortedEntries = sortEntriesForPlayback(entries, voiceSignalThreshold);
     const selected = sortedEntries.slice(0, maxTicketsToSpeak);
 
     if (!selected.length) {
       setRunState({
         isQueueLoaded: false,
-        statusMessage: 'No tickets met the voice threshold.'
+        statusMessage: 'No active visible work items found.'
       });
       return { ok: true, count: 0 };
     }

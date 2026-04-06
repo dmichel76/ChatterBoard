@@ -5,7 +5,8 @@ const nextButton = document.getElementById('nextButton');
 const clearButton = document.getElementById('clearButton');
 
 const nowReadingPanelEl = document.getElementById('nowReadingPanel');
-const frustrationScoreEl = document.getElementById('frustrationScore');
+const frustrationIconEl = document.getElementById('frustrationIcon');
+const frustrationNumberEl = document.getElementById('frustrationNumber');
 const currentTicketTitleEl = document.getElementById('currentTicketTitle');
 
 const lastUpdatedLabelEl = document.getElementById('lastUpdatedLabel');
@@ -74,7 +75,20 @@ function getFrustrationFaceIcon(score) {
   }
 
   const clamped = Math.max(0, Math.min(100, Math.round(score)));
-  const level = Math.min(4, Math.floor(clamped / 20));
+  
+  // Mild skew: Calm 0-30, Concerned 31-50, Worried 51-70, Frustrated 71-85, Angry 86-100
+  let level;
+  if (clamped <= 30) {
+    level = 0; // Calm
+  } else if (clamped <= 50) {
+    level = 1; // Slightly Concerned
+  } else if (clamped <= 70) {
+    level = 2; // Worried
+  } else if (clamped <= 85) {
+    level = 3; // Frustrated
+  } else {
+    level = 4; // Angry
+  }
 
   const faces = [
     {
@@ -138,8 +152,8 @@ function getFrustrationFaceIcon(score) {
 
 function setCurrentTicket(ticket) {
   if (!ticket) {
-    frustrationScoreEl.innerHTML = '-';
-    frustrationScoreEl.removeAttribute('title');
+    frustrationIconEl.innerHTML = '-';
+    frustrationNumberEl.textContent = '-';
     currentTicketTitleEl.textContent = '-';
     resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
     resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
@@ -149,11 +163,11 @@ function setCurrentTicket(ticket) {
 
   if (Number.isFinite(ticket.frustrationScore)) {
     const roundedScore = Math.round(ticket.frustrationScore);
-    frustrationScoreEl.innerHTML = getFrustrationFaceIcon(ticket.frustrationScore);
-    frustrationScoreEl.setAttribute('title', `Frustration score: ${roundedScore}`);
+    frustrationIconEl.innerHTML = getFrustrationFaceIcon(ticket.frustrationScore);
+    frustrationNumberEl.textContent = String(roundedScore);
   } else {
-    frustrationScoreEl.innerHTML = '-';
-    frustrationScoreEl.removeAttribute('title');
+    frustrationIconEl.innerHTML = '-';
+    frustrationNumberEl.textContent = '-';
   }
 
   currentTicketTitleEl.textContent = ticket.title ?? '-';

@@ -70,9 +70,20 @@
     }
 
     .frustration-score {
-      font-size: 18px;
-      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 12px;
       margin-bottom: 12px;
+    }
+
+    .frustration-icon {
+      flex-shrink: 0;
+    }
+
+    .frustration-number {
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
     }
 
     .divider {
@@ -151,7 +162,10 @@
 
   <div id="nowReadingPanel" class="now-reading hidden">
     <div class="frustration-label">Frustration score</div>
-    <div id="frustrationScore" class="frustration-score">-</div>
+    <div class="frustration-score">
+      <div id="frustrationIcon" class="frustration-icon">-</div>
+      <div id="frustrationNumber" class="frustration-number">-</div>
+    </div>
 
     <hr class="divider" />
 
