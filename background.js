@@ -6,7 +6,8 @@ const WORK_ITEM_REVISIONS_TOP = 200;
 
 const sentencesCache = {
   lastUpdated: null,
-  timeInColumn: null
+  timeInColumn: null,
+  timeInProgress: null
 };
 
 const runState = {
@@ -50,7 +51,8 @@ async function getRuntimeSettings() {
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
-    'tagsToIgnore'
+    'tagsToIgnore',
+    'inProgressColumnName'
   ]);
 
   const maxTicketsToSpeak = clampNumber(
@@ -72,13 +74,15 @@ async function getRuntimeSettings() {
 
   const adoPat = (stored.adoPat || '').trim();
   const tagsToIgnore = (stored.tagsToIgnore || '').trim();
+  const inProgressColumnName = (stored.inProgressColumnName || '').trim();
 
   return {
     adoPat,
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,
-    tagsToIgnore
+    tagsToIgnore,
+    inProgressColumnName
   };
 }
 
@@ -408,6 +412,39 @@ async function getElapsedMsSinceEnteredCurrentColumn({ org, project, adoPat, ite
   return Math.max(0, Date.now() - firstMatchingTime);
 }
 
+async function getElapsedMsSinceEnteredInProgressColumn({ org, project, adoPat, item, inProgressColumnName }) {
+  if (!inProgressColumnName) {
+    return null;
+  }
+
+  const revisionsData = await fetchWorkItemRevisions({
+    org,
+    project,
+    adoPat,
+    id: item.id
+  });
+
+  const revisions = revisionsData.value || [];
+  if (!revisions.length) {
+    return null;
+  }
+
+  // Find the first time the item entered the in-progress column
+  for (let i = 0; i < revisions.length; i += 1) {
+    const revisionColumn = getBoardColumnFromFields(revisions[i].fields);
+    
+    if (revisionColumn === inProgressColumnName) {
+      const entryTime = getChangedTimeFromFields(revisions[i].fields);
+      if (entryTime == null) {
+        return null;
+      }
+      return Math.max(0, Date.now() - entryTime);
+    }
+  }
+
+  return null;
+}
+
 async function buildTimeInColumnElapsedMap({ org, project, adoPat, items }) {
   const elapsedMap = new Map();
 
@@ -436,9 +473,45 @@ async function buildTimeInColumnElapsedMap({ org, project, adoPat, items }) {
   return elapsedMap;
 }
 
-function getSignalDefinitions(item, timeInColumnElapsedMap) {
+async function buildTimeInProgressElapsedMap({ org, project, adoPat, items, inProgressColumnName }) {
+  const elapsedMap = new Map();
+
+  if (!inProgressColumnName) {
+    // If no column name configured, return empty map
+    items.forEach(item => elapsedMap.set(item.id, null));
+    return elapsedMap;
+  }
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+
+    setRunState({
+      statusMessage: `Reading progress history ${index + 1}/${items.length}...`
+    });
+
+    try {
+      const elapsedMs = await getElapsedMsSinceEnteredInProgressColumn({
+        org,
+        project,
+        adoPat,
+        item,
+        inProgressColumnName
+      });
+
+      elapsedMap.set(item.id, elapsedMs);
+    } catch (error) {
+      console.warn(`Could not get time-in-progress for work item ${item.id}`, error);
+      elapsedMap.set(item.id, null);
+    }
+  }
+
+  return elapsedMap;
+}
+
+function getSignalDefinitions(item, timeInColumnElapsedMap, timeInProgressElapsedMap) {
   const lastUpdatedDurationMs = getElapsedMsSinceChanged(item);
   const timeInColumnDurationMs = timeInColumnElapsedMap.get(item.id);
+  const timeInProgressDurationMs = timeInProgressElapsedMap.get(item.id);
 
   return {
     lastUpdated: {
@@ -460,6 +533,18 @@ function getSignalDefinitions(item, timeInColumnElapsedMap) {
         ? formatDurationForSpeech(timeInColumnDurationMs)
         : null,
       isAvailable: Number.isFinite(timeInColumnDurationMs)
+    },
+    timeInProgress: {
+      key: 'timeInProgress',
+      label: 'Time in progress',
+      durationMs: timeInProgressDurationMs,
+      rawValue: Number.isFinite(timeInProgressDurationMs)
+        ? formatDurationShort(timeInProgressDurationMs)
+        : 'Unknown',
+      speechValue: Number.isFinite(timeInProgressDurationMs)
+        ? formatDurationForSpeech(timeInProgressDurationMs)
+        : null,
+      isAvailable: Number.isFinite(timeInProgressDurationMs)
     }
   };
 }
@@ -478,9 +563,9 @@ function getGlobalMaxDurationMs(signalDefinitionsByItem) {
   return Math.max(...allDurations);
 }
 
-function buildSignalEntries(items, timeInColumnElapsedMap, scoringMode, absoluteScaleMaxDays) {
+function buildSignalEntries(items, timeInColumnElapsedMap, timeInProgressElapsedMap, scoringMode, absoluteScaleMaxDays) {
   const signalDefinitionsByItem = items.map((item) =>
-    getSignalDefinitions(item, timeInColumnElapsedMap)
+    getSignalDefinitions(item, timeInColumnElapsedMap, timeInProgressElapsedMap)
   );
 
   const globalMaxDurationMs =
@@ -688,6 +773,12 @@ async function navigateToTicket(index) {
           rawValue: entry.signals.timeInColumn.rawValue,
           score: entry.signals.timeInColumn.score,
           isAvailable: entry.signals.timeInColumn.isAvailable
+        },
+        timeInProgress: {
+          label: entry.signals.timeInProgress.label,
+          rawValue: entry.signals.timeInProgress.rawValue,
+          score: entry.signals.timeInProgress.score,
+          isAvailable: entry.signals.timeInProgress.isAvailable
         }
       }
     },
@@ -866,9 +957,18 @@ async function loadChatterBoard({ tabId, url }) {
       items: filteredItems
     });
 
+    const timeInProgressElapsedMap = await buildTimeInProgressElapsedMap({
+      org: parsed.org,
+      project: parsed.project,
+      adoPat,
+      items: filteredItems,
+      inProgressColumnName: settings.inProgressColumnName
+    });
+
     const entries = buildSignalEntries(
       filteredItems,
       timeInColumnElapsedMap,
+      timeInProgressElapsedMap,
       scoringMode,
       absoluteScaleMaxDays
     );

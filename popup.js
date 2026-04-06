@@ -17,6 +17,10 @@ const timeInColumnLabelEl = document.getElementById('timeInColumnLabel');
 const timeInColumnRawValueEl = document.getElementById('timeInColumnRawValue');
 const timeInColumnBarEl = document.getElementById('timeInColumnBar');
 
+const timeInProgressLabelEl = document.getElementById('timeInProgressLabel');
+const timeInProgressRawValueEl = document.getElementById('timeInProgressRawValue');
+const timeInProgressBarEl = document.getElementById('timeInProgressBar');
+
 function setStatus(message) {
   statusEl.textContent = message;
 }
@@ -157,6 +161,7 @@ function setCurrentTicket(ticket) {
     currentTicketTitleEl.textContent = '-';
     resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
     resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
+    resetSignalDisplay(timeInProgressLabelEl, timeInProgressRawValueEl, timeInProgressBarEl, 'Time in progress');
     nowReadingPanelEl.classList.add('hidden');
     return;
   }
@@ -186,6 +191,14 @@ function setCurrentTicket(ticket) {
     barEl: timeInColumnBarEl,
     signal: ticket.signals?.timeInColumn,
     defaultLabel: 'Time in column'
+  });
+
+  applySignalDisplay({
+    labelEl: timeInProgressLabelEl,
+    rawValueEl: timeInProgressRawValueEl,
+    barEl: timeInProgressBarEl,
+    signal: ticket.signals?.timeInProgress,
+    defaultLabel: 'Time in progress'
   });
 
   nowReadingPanelEl.classList.remove('hidden');
@@ -328,4 +341,5 @@ clearButton.addEventListener('click', async () => {
 
 resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
 resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
+resetSignalDisplay(timeInProgressLabelEl, timeInProgressRawValueEl, timeInProgressBarEl, 'Time in progress');
 loadState();
