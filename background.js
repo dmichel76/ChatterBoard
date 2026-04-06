@@ -6,16 +6,13 @@ const WORK_ITEM_BATCH_SIZE = 200;
 const WORK_ITEM_REVISIONS_TOP = 200;
 
 const runState = {
-  isRunning: false,
-  isPaused: false,
-  pauseRequested: false,
-  stopRequested: false,
+  isQueueLoaded: false,
   currentTabId: null,
   currentHighlightedTicketId: null,
   currentTicket: null,
   statusMessage: 'Idle.',
   queue: [],
-  currentQueueIndex: 0
+  currentQueueIndex: -1
 };
 
 function setRunState(patch) {
@@ -28,14 +25,13 @@ function broadcastState() {
     {
       type: 'CHATTERBOARD_STATE',
       state: {
-        isRunning: runState.isRunning,
-        isPaused: runState.isPaused,
-        pauseRequested: runState.pauseRequested,
-        stopRequested: runState.stopRequested,
+        isQueueLoaded: runState.isQueueLoaded,
         currentTabId: runState.currentTabId,
         currentHighlightedTicketId: runState.currentHighlightedTicketId,
         currentTicket: runState.currentTicket,
-        statusMessage: runState.statusMessage
+        statusMessage: runState.statusMessage,
+        queueLength: runState.queue.length,
+        currentQueueIndex: runState.currentQueueIndex
       }
     },
     () => {
@@ -113,11 +109,7 @@ function speak(text) {
         }
 
         if (event.type === 'interrupted' || event.type === 'cancelled') {
-          if (runState.stopRequested) {
-            resolve();
-          } else {
-            reject(new Error(`TTS failed: ${event.type}`));
-          }
+          resolve();
           return;
         }
 
@@ -202,8 +194,6 @@ async function fetchAllWorkItems({ org, project, adoPat, ids }) {
   const allItems = [];
 
   for (const batchIds of batches) {
-    ensureNotStopped();
-
     const batchData = await fetchWorkItemsBatch({
       org,
       project,
@@ -246,36 +236,18 @@ async function clearCurrentHighlightIfAny() {
   runState.currentHighlightedTicketId = null;
 }
 
-function requestStop() {
-  runState.stopRequested = true;
-  runState.pauseRequested = false;
-  runState.isPaused = false;
-  runState.queue = [];
-  runState.currentQueueIndex = 0;
+function stopChatterBoard() {
   chrome.tts.stop();
+  clearCurrentHighlightIfAny();
   setRunState({
-    stopRequested: true,
-    pauseRequested: false,
-    isPaused: false,
-    statusMessage: 'Stopping...'
+    isQueueLoaded: false,
+    currentTabId: null,
+    currentHighlightedTicketId: null,
+    currentTicket: null,
+    queue: [],
+    currentQueueIndex: -1,
+    statusMessage: 'Cleared.'
   });
-}
-
-function requestPause() {
-  if (!runState.isRunning || runState.isPaused) {
-    return;
-  }
-
-  setRunState({
-    pauseRequested: true,
-    statusMessage: 'Pausing after current ticket...'
-  });
-}
-
-function ensureNotStopped() {
-  if (runState.stopRequested) {
-    throw new Error('Run stopped by user.');
-  }
 }
 
 function getElapsedMsSinceChanged(item) {
@@ -442,8 +414,6 @@ async function buildTimeInColumnElapsedMap({ org, project, adoPat, items }) {
   const elapsedMap = new Map();
 
   for (let index = 0; index < items.length; index += 1) {
-    ensureNotStopped();
-
     const item = items[index];
 
     setRunState({
@@ -641,123 +611,108 @@ function sortEntriesForPlayback(entries, voiceSignalThreshold) {
   });
 }
 
-async function playQueueFromCurrentState(voiceSignalThreshold) {
-  while (runState.currentQueueIndex < runState.queue.length) {
-    ensureNotStopped();
-
-    if (runState.isPaused) {
-      return { ok: true, paused: true, count: runState.currentQueueIndex };
-    }
-
-    if (runState.currentQueueIndex > 0 && runState.currentHighlightedTicketId) {
-      await clearCurrentHighlightIfAny();
-    }
-
-    const entry = runState.queue[runState.currentQueueIndex];
-    const id = entry.item.id;
-    const title = entry.item.fields['System.Title'] || 'Untitled work item';
-    const voiceSignals = getVoiceEligibleSignals(entry, voiceSignalThreshold);
-    const primarySignal = voiceSignals[0] || getPrimarySignal(entry, voiceSignalThreshold);
-
-    setRunState({
-      currentHighlightedTicketId: id,
-      currentTicket: {
-        title,
-        reason: buildReasonFromSignal(primarySignal),
-        frustrationScore: entry.frustrationScore,
-        signals: {
-          lastUpdated: {
-            label: entry.signals.lastUpdated.label,
-            rawValue: entry.signals.lastUpdated.rawValue,
-            score: entry.signals.lastUpdated.score,
-            isAvailable: entry.signals.lastUpdated.isAvailable
-          },
-          timeInColumn: {
-            label: entry.signals.timeInColumn.label,
-            rawValue: entry.signals.timeInColumn.rawValue,
-            score: entry.signals.timeInColumn.score,
-            isAvailable: entry.signals.timeInColumn.isAvailable
-          }
-        }
-      },
-      statusMessage: `Reading ticket ${id}...`
-    });
-
-    try {
-      await sendTabMessage(runState.currentTabId, {
-        type: 'SCROLL_TICKET_INTO_VIEW',
-        workItemId: id
-      });
-    } catch (error) {
-      console.warn('Scroll failed', id, error);
-    }
-
-    try {
-      await sendTabMessage(runState.currentTabId, {
-        type: 'HIGHLIGHT_TICKET',
-        workItemId: id
-      });
-    } catch (error) {
-      console.warn('Highlight failed', id, error);
-    }
-
-    await speak(buildSpeechFromSignals(voiceSignals, title));
-    ensureNotStopped();
-
-    runState.currentQueueIndex += 1;
-
-    if (runState.pauseRequested) {
-      setRunState({
-        isRunning: false,
-        isPaused: true,
-        pauseRequested: false,
-        statusMessage: 'Paused. Ready to resume.'
-      });
-      return { ok: true, paused: true, count: runState.currentQueueIndex };
-    }
-
-    try {
-      await sendTabMessage(runState.currentTabId, {
-        type: 'CLEAR_HIGHLIGHT_TICKET',
-        workItemId: id
-      });
-    } catch (error) {
-      console.warn('Clear highlight failed', id, error);
-    }
-
-    setRunState({
-      currentHighlightedTicketId: null,
-      statusMessage: 'Moving to next ticket...'
-    });
+async function navigateToTicket(index, voiceSignalThreshold) {
+  if (index < 0 || index >= runState.queue.length) {
+    throw new Error('Invalid queue index.');
   }
 
+  await clearCurrentHighlightIfAny();
+
+  const entry = runState.queue[index];
+  const id = entry.item.id;
+  const title = entry.item.fields['System.Title'] || 'Untitled work item';
+  const voiceSignals = getVoiceEligibleSignals(entry, voiceSignalThreshold);
+  const primarySignal = voiceSignals[0] || getPrimarySignal(entry, voiceSignalThreshold);
+
   setRunState({
-    isRunning: false,
-    isPaused: false,
-    pauseRequested: false,
-    currentHighlightedTicketId: null,
-    currentTicket: null,
-    statusMessage: `Done. Spoke ${runState.currentQueueIndex} ticket(s).`
+    currentQueueIndex: index,
+    currentHighlightedTicketId: id,
+    currentTicket: {
+      title,
+      frustrationScore: entry.frustrationScore,
+      signals: {
+        lastUpdated: {
+          label: entry.signals.lastUpdated.label,
+          rawValue: entry.signals.lastUpdated.rawValue,
+          score: entry.signals.lastUpdated.score,
+          isAvailable: entry.signals.lastUpdated.isAvailable
+        },
+        timeInColumn: {
+          label: entry.signals.timeInColumn.label,
+          rawValue: entry.signals.timeInColumn.rawValue,
+          score: entry.signals.timeInColumn.score,
+          isAvailable: entry.signals.timeInColumn.isAvailable
+        }
+      }
+    },
+    statusMessage: `Reading ticket ${index + 1} of ${runState.queue.length}`
   });
 
-  return { ok: true, count: runState.currentQueueIndex };
+  try {
+    await sendTabMessage(runState.currentTabId, {
+      type: 'SCROLL_TICKET_INTO_VIEW',
+      workItemId: id
+    });
+  } catch (error) {
+    console.warn('Scroll failed', id, error);
+  }
+
+  try {
+    await sendTabMessage(runState.currentTabId, {
+      type: 'HIGHLIGHT_TICKET',
+      workItemId: id
+    });
+  } catch (error) {
+    console.warn('Highlight failed', id, error);
+  }
+
+  await speak(buildSpeechFromSignals(voiceSignals, title));
 }
 
-async function runChatterBoard({ tabId, url }) {
-  if (runState.isRunning || runState.isPaused) {
-    throw new Error('ChatterBoard is already running or paused.');
+async function nextTicket() {
+  if (!runState.isQueueLoaded) {
+    throw new Error('No queue loaded. Start first.');
+  }
+
+  const nextIndex = runState.currentQueueIndex + 1;
+  
+  if (nextIndex >= runState.queue.length) {
+    throw new Error('Already at last ticket.');
+  }
+
+  const settings = await getRuntimeSettings();
+  await navigateToTicket(nextIndex, settings.voiceSignalThreshold);
+  return { ok: true, index: nextIndex };
+}
+
+async function previousTicket() {
+  if (!runState.isQueueLoaded) {
+    throw new Error('No queue loaded. Start first.');
+  }
+
+  const prevIndex = runState.currentQueueIndex - 1;
+  
+  if (prevIndex < 0) {
+    throw new Error('Already at first ticket.');
+  }
+
+  const settings = await getRuntimeSettings();
+  await navigateToTicket(prevIndex, settings.voiceSignalThreshold);
+  return { ok: true, index: prevIndex };
+}
+
+async function loadChatterBoard({ tabId, url }) {
+  if (runState.isQueueLoaded) {
+    throw new Error('Queue already loaded. Clear first.');
   }
 
   setRunState({
-    isRunning: true,
-    isPaused: false,
-    pauseRequested: false,
-    stopRequested: false,
+    isQueueLoaded: false,
     currentTabId: tabId,
     currentHighlightedTicketId: null,
     currentTicket: null,
     queue: [],
-    currentQueueIndex: 0,
+    currentQueueIndex: -1,
     statusMessage: 'Starting...'
   });
 
@@ -790,11 +745,9 @@ async function runChatterBoard({ tabId, url }) {
 
     const ids = await getActiveVisibleTicketIds(tabId);
 
-    ensureNotStopped();
-
     if (!ids.length) {
       setRunState({
-        isRunning: false,
+        isQueueLoaded: false,
         statusMessage: 'No active visible work items found on the current board.'
       });
       await speak('No active work items found.');
@@ -812,16 +765,12 @@ async function runChatterBoard({ tabId, url }) {
       ids
     });
 
-    ensureNotStopped();
-
     const timeInColumnElapsedMap = await buildTimeInColumnElapsedMap({
       org: parsed.org,
       project: parsed.project,
       adoPat,
       items
     });
-
-    ensureNotStopped();
 
     const entries = buildSignalEntries(
       items,
@@ -839,107 +788,39 @@ async function runChatterBoard({ tabId, url }) {
 
     if (!selected.length) {
       setRunState({
-        isRunning: false,
+        isQueueLoaded: false,
         statusMessage: 'No tickets met the voice threshold.'
       });
       return { ok: true, count: 0 };
     }
 
     setRunState({
+      isQueueLoaded: true,
       queue: selected,
-      currentQueueIndex: 0
+      currentQueueIndex: -1
     });
 
-    return await playQueueFromCurrentState(voiceSignalThreshold);
+    await navigateToTicket(0, voiceSignalThreshold);
+    
+    return { ok: true, count: selected.length };
   } catch (error) {
-    if (error.message === 'Run stopped by user.') {
-      await clearCurrentHighlightIfAny();
-      setRunState({
-        isRunning: false,
-        isPaused: false,
-        pauseRequested: false,
-        stopRequested: false,
-        currentHighlightedTicketId: null,
-        currentTicket: null,
-        queue: [],
-        currentQueueIndex: 0,
-        statusMessage: 'Stopped.'
-      });
-      return { ok: true, count: 0, stopped: true };
-    }
-
     await clearCurrentHighlightIfAny();
     setRunState({
-      isRunning: false,
-      isPaused: false,
-      pauseRequested: false,
+      isQueueLoaded: false,
+      currentTabId: null,
       currentHighlightedTicketId: null,
       currentTicket: null,
       queue: [],
-      currentQueueIndex: 0,
+      currentQueueIndex: -1,
       statusMessage: `Error: ${error.message}`
     });
     throw error;
-  } finally {
-    runState.stopRequested = false;
-  }
-}
-
-async function resumeChatterBoard() {
-  if (!runState.isPaused) {
-    throw new Error('ChatterBoard is not paused.');
-  }
-
-  const settings = await getRuntimeSettings();
-  const { voiceSignalThreshold } = settings;
-
-  setRunState({
-    isRunning: true,
-    isPaused: false,
-    pauseRequested: false,
-    stopRequested: false,
-    statusMessage: 'Resuming...'
-  });
-
-  try {
-    return await playQueueFromCurrentState(voiceSignalThreshold);
-  } catch (error) {
-    if (error.message === 'Run stopped by user.') {
-      await clearCurrentHighlightIfAny();
-      setRunState({
-        isRunning: false,
-        isPaused: false,
-        pauseRequested: false,
-        stopRequested: false,
-        currentHighlightedTicketId: null,
-        currentTicket: null,
-        queue: [],
-        currentQueueIndex: 0,
-        statusMessage: 'Stopped.'
-      });
-      return { ok: true, count: 0, stopped: true };
-    }
-
-    await clearCurrentHighlightIfAny();
-    setRunState({
-      isRunning: false,
-      isPaused: false,
-      pauseRequested: false,
-      currentHighlightedTicketId: null,
-      currentTicket: null,
-      queue: [],
-      currentQueueIndex: 0,
-      statusMessage: `Error: ${error.message}`
-    });
-    throw error;
-  } finally {
-    runState.stopRequested = false;
   }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === 'RUN_CHATTERBOARD') {
-    runChatterBoard({
+  if (message?.type === 'LOAD_CHATTERBOARD') {
+    loadChatterBoard({
       tabId: message.tabId,
       url: message.url
     })
@@ -951,18 +832,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message?.type === 'PAUSE_CHATTERBOARD') {
-    try {
-      requestPause();
-      sendResponse({ ok: true });
-    } catch (error) {
-      sendResponse({ ok: false, error: error.message });
-    }
+  if (message?.type === 'NEXT_TICKET') {
+    nextTicket()
+      .then(sendResponse)
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message });
+      });
+
     return true;
   }
 
-  if (message?.type === 'RESUME_CHATTERBOARD') {
-    resumeChatterBoard()
+  if (message?.type === 'PREVIOUS_TICKET') {
+    previousTicket()
       .then(sendResponse)
       .catch((error) => {
         sendResponse({ ok: false, error: error.message });
@@ -972,21 +853,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'STOP_CHATTERBOARD') {
-    requestStop();
-    clearCurrentHighlightIfAny()
-      .then(() => {
-        setRunState({
-          currentHighlightedTicketId: null,
-          currentTicket: null,
-          queue: [],
-          currentQueueIndex: 0
-        });
-        sendResponse({ ok: true });
-      })
-      .catch((error) => {
-        sendResponse({ ok: false, error: error.message });
-      });
-
+    try {
+      stopChatterBoard();
+      sendResponse({ ok: true });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message });
+    }
     return true;
   }
 
@@ -994,14 +866,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({
       ok: true,
       state: {
-        isRunning: runState.isRunning,
-        isPaused: runState.isPaused,
-        pauseRequested: runState.pauseRequested,
-        stopRequested: runState.stopRequested,
+        isQueueLoaded: runState.isQueueLoaded,
         currentTabId: runState.currentTabId,
         currentHighlightedTicketId: runState.currentHighlightedTicketId,
         currentTicket: runState.currentTicket,
-        statusMessage: runState.statusMessage
+        statusMessage: runState.statusMessage,
+        queueLength: runState.queue.length,
+        currentQueueIndex: runState.currentQueueIndex
       }
     });
     return true;

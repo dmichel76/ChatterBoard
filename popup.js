@@ -1,7 +1,8 @@
 const statusEl = document.getElementById('status');
-const playButton = document.getElementById('playButton');
-const pauseButton = document.getElementById('pauseButton');
-const stopButton = document.getElementById('stopButton');
+const startButton = document.getElementById('startButton');
+const previousButton = document.getElementById('previousButton');
+const nextButton = document.getElementById('nextButton');
+const clearButton = document.getElementById('clearButton');
 
 const nowReadingPanelEl = document.getElementById('nowReadingPanel');
 const frustrationScoreEl = document.getElementById('frustrationScore');
@@ -182,19 +183,14 @@ function applyState(state) {
   setStatus(state.statusMessage || 'Idle.');
   setCurrentTicket(state.currentTicket || null);
 
-  playButton.disabled = !!state.isRunning || !!state.isPaused;
-  stopButton.disabled = !state.isRunning && !state.isPaused;
+  const hasQueue = state.isQueueLoaded && state.queueLength > 0;
+  const atFirst = state.currentQueueIndex === 0;
+  const atLast = state.currentQueueIndex === state.queueLength - 1;
 
-  if (state.isPaused) {
-    pauseButton.disabled = false;
-    pauseButton.textContent = 'Resume';
-  } else if (state.isRunning) {
-    pauseButton.disabled = false;
-    pauseButton.textContent = state.pauseRequested ? 'Pause...' : 'Pause';
-  } else {
-    pauseButton.disabled = true;
-    pauseButton.textContent = 'Pause';
-  }
+  startButton.disabled = hasQueue;
+  clearButton.disabled = !hasQueue;
+  previousButton.disabled = !hasQueue || atFirst;
+  nextButton.disabled = !hasQueue || atLast;
 }
 
 async function loadState() {
@@ -217,9 +213,9 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-playButton.addEventListener('click', async () => {
+startButton.addEventListener('click', async () => {
   try {
-    setStatus('Running...');
+    setStatus('Loading...');
     setCurrentTicket(null);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -234,7 +230,7 @@ playButton.addEventListener('click', async () => {
     }
 
     const response = await chrome.runtime.sendMessage({
-      type: 'RUN_CHATTERBOARD',
+      type: 'LOAD_CHATTERBOARD',
       tabId: tab.id,
       url: tab.url
     });
@@ -244,18 +240,12 @@ playButton.addEventListener('click', async () => {
       return;
     }
 
-    if (response.stopped) {
-      setStatus('Stopped.');
+    if (response.count === 0) {
+      setStatus('No tickets met the criteria.');
       return;
     }
 
-    if (response.paused) {
-      setStatus('Paused. Ready to resume.');
-      return;
-    }
-
-    setCurrentTicket(null);
-    setStatus(`Done. Spoke ${response.count} ticket(s).`);
+    setStatus(`Loaded ${response.count} ticket(s).`);
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
@@ -263,54 +253,17 @@ playButton.addEventListener('click', async () => {
   }
 });
 
-pauseButton.addEventListener('click', async () => {
+nextButton.addEventListener('click', async () => {
   try {
+    setStatus('Moving to next ticket...');
+    
     const response = await chrome.runtime.sendMessage({
-      type: 'GET_CHATTERBOARD_STATE'
+      type: 'NEXT_TICKET'
     });
 
     if (!response?.ok) {
-      setStatus('Could not read current state.');
+      setStatus(response?.error || 'Could not move to next ticket.');
       return;
-    }
-
-    const state = response.state;
-
-    if (state.isPaused) {
-      setStatus('Resuming...');
-      const resumeResponse = await chrome.runtime.sendMessage({
-        type: 'RESUME_CHATTERBOARD'
-      });
-
-      if (!resumeResponse?.ok) {
-        setStatus(resumeResponse?.error || 'Could not resume ChatterBoard.');
-        return;
-      }
-
-      if (resumeResponse.stopped) {
-        setStatus('Stopped.');
-        return;
-      }
-
-      if (resumeResponse.paused) {
-        setStatus('Paused. Ready to resume.');
-        return;
-      }
-
-      setCurrentTicket(null);
-      setStatus(`Done. Spoke ${resumeResponse.count} ticket(s).`);
-      return;
-    }
-
-    if (state.isRunning) {
-      setStatus('Pausing after current ticket...');
-      const pauseResponse = await chrome.runtime.sendMessage({
-        type: 'PAUSE_CHATTERBOARD'
-      });
-
-      if (!pauseResponse?.ok) {
-        setStatus(pauseResponse?.error || 'Could not pause ChatterBoard.');
-      }
     }
   } catch (error) {
     setStatus(`Error: ${error.message}`);
@@ -319,19 +272,39 @@ pauseButton.addEventListener('click', async () => {
   }
 });
 
-stopButton.addEventListener('click', async () => {
+previousButton.addEventListener('click', async () => {
   try {
-    setStatus('Stopping...');
+    setStatus('Moving to previous ticket...');
+    
+    const response = await chrome.runtime.sendMessage({
+      type: 'PREVIOUS_TICKET'
+    });
+
+    if (!response?.ok) {
+      setStatus(response?.error || 'Could not move to previous ticket.');
+      return;
+    }
+  } catch (error) {
+    setStatus(`Error: ${error.message}`);
+  } finally {
+    await loadState();
+  }
+});
+
+clearButton.addEventListener('click', async () => {
+  try {
+    setStatus('Clearing...');
     const response = await chrome.runtime.sendMessage({
       type: 'STOP_CHATTERBOARD'
     });
 
     if (!response?.ok) {
-      setStatus(response?.error || 'Could not stop ChatterBoard.');
+      setStatus(response?.error || 'Could not clear queue.');
       return;
     }
 
-    setStatus('Stopped.');
+    setCurrentTicket(null);
+    setStatus('Cleared.');
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
