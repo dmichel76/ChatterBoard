@@ -47,6 +47,26 @@
       white-space: pre-wrap;
     }
 
+    .scale-info {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: #f6f6f6;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .scale-info.hidden {
+      display: none;
+    }
+
+    .scale-info-label {
+      font-weight: bold;
+      display: block;
+      margin-bottom: 2px;
+    }
+
     .now-reading {
       margin-top: 14px;
       padding: 10px;
@@ -145,12 +165,18 @@
 
   <div class="button-row">
     <button id="playButton">Play</button>
+    <button id="pauseButton" disabled>Pause</button>
     <button id="stopButton" disabled>Stop</button>
   </div>
 
   <div class="muted">Works on Azure DevOps board pages. Configure PAT in Options.</div>
 
   <div id="status" class="status">Idle.</div>
+
+  <div id="scaleInfo" class="scale-info">
+    <span class="scale-info-label">Scoring scale</span>
+    <span id="scaleInfoValue">-</span>
+  </div>
 
   <div id="nowReadingPanel" class="now-reading hidden">
     <h2>Now reading</h2>

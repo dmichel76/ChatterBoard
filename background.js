@@ -1,15 +1,21 @@
-const MAX_TICKETS_TO_SPEAK = 5;
+const DEFAULT_VOICE_SIGNAL_THRESHOLD = 75;
+const DEFAULT_MAX_TICKETS_TO_SPEAK = 5;
+const DEFAULT_SCORING_MODE = 'relative';
+const DEFAULT_ABSOLUTE_SCALE_MAX_DAYS = 30;
 const WORK_ITEM_BATCH_SIZE = 200;
 const WORK_ITEM_REVISIONS_TOP = 200;
-const VOICE_SIGNAL_THRESHOLD = 75;
 
 const runState = {
   isRunning: false,
+  isPaused: false,
+  pauseRequested: false,
   stopRequested: false,
   currentTabId: null,
   currentHighlightedTicketId: null,
   currentTicket: null,
-  statusMessage: 'Idle.'
+  statusMessage: 'Idle.',
+  queue: [],
+  currentQueueIndex: 0
 };
 
 function setRunState(patch) {
@@ -23,6 +29,8 @@ function broadcastState() {
       type: 'CHATTERBOARD_STATE',
       state: {
         isRunning: runState.isRunning,
+        isPaused: runState.isPaused,
+        pauseRequested: runState.pauseRequested,
         stopRequested: runState.stopRequested,
         currentTabId: runState.currentTabId,
         currentHighlightedTicketId: runState.currentHighlightedTicketId,
@@ -34,6 +42,60 @@ function broadcastState() {
       void chrome.runtime.lastError;
     }
   );
+}
+
+async function getRuntimeSettings() {
+  const stored = await chrome.storage.sync.get([
+    'adoPat',
+    'voiceSignalThreshold',
+    'scoringMode',
+    'absoluteScaleMaxDays',
+    'maxTicketsToSpeak'
+  ]);
+
+  const voiceSignalThreshold = clampNumber(
+    stored.voiceSignalThreshold,
+    0,
+    100,
+    DEFAULT_VOICE_SIGNAL_THRESHOLD
+  );
+
+  const maxTicketsToSpeak = clampNumber(
+    stored.maxTicketsToSpeak,
+    1,
+    50,
+    DEFAULT_MAX_TICKETS_TO_SPEAK
+  );
+
+  const scoringMode =
+    stored.scoringMode === 'absolute' ? 'absolute' : DEFAULT_SCORING_MODE;
+
+  const absoluteScaleMaxDays = clampNumber(
+    stored.absoluteScaleMaxDays,
+    1,
+    3650,
+    DEFAULT_ABSOLUTE_SCALE_MAX_DAYS
+  );
+
+  const adoPat = (stored.adoPat || '').trim();
+
+  return {
+    adoPat,
+    voiceSignalThreshold,
+    scoringMode,
+    absoluteScaleMaxDays,
+    maxTicketsToSpeak
+  };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(min, Math.min(max, Math.round(parsed)));
 }
 
 function speak(text) {
@@ -186,10 +248,27 @@ async function clearCurrentHighlightIfAny() {
 
 function requestStop() {
   runState.stopRequested = true;
+  runState.pauseRequested = false;
+  runState.isPaused = false;
+  runState.queue = [];
+  runState.currentQueueIndex = 0;
   chrome.tts.stop();
   setRunState({
     stopRequested: true,
+    pauseRequested: false,
+    isPaused: false,
     statusMessage: 'Stopping...'
+  });
+}
+
+function requestPause() {
+  if (!runState.isRunning || runState.isPaused) {
+    return;
+  }
+
+  setRunState({
+    pauseRequested: true,
+    statusMessage: 'Pausing after current ticket...'
   });
 }
 
@@ -263,7 +342,7 @@ function formatDurationForSpeech(durationMs) {
   return `${days} day${days === 1 ? '' : 's'}`;
 }
 
-function normaliseDurationToScore(durationMs, globalMaxDurationMs) {
+function normaliseDurationToRelativeScore(durationMs, globalMaxDurationMs) {
   if (!Number.isFinite(durationMs)) {
     return null;
   }
@@ -273,6 +352,20 @@ function normaliseDurationToScore(durationMs, globalMaxDurationMs) {
   }
 
   const raw = (durationMs / globalMaxDurationMs) * 100;
+  const clamped = Math.max(0, Math.min(100, raw));
+  return Math.round(clamped);
+}
+
+function normaliseDurationToAbsoluteScore(durationMs, absoluteScaleMaxMs) {
+  if (!Number.isFinite(durationMs)) {
+    return null;
+  }
+
+  if (!Number.isFinite(absoluteScaleMaxMs) || absoluteScaleMaxMs <= 0) {
+    return 50;
+  }
+
+  const raw = (durationMs / absoluteScaleMaxMs) * 100;
   const clamped = Math.max(0, Math.min(100, raw));
   return Math.round(clamped);
 }
@@ -417,21 +510,31 @@ function getGlobalMaxDurationMs(signalDefinitionsByItem) {
   return Math.max(...allDurations);
 }
 
-function buildSignalEntries(items, timeInColumnElapsedMap) {
+function buildSignalEntries(items, timeInColumnElapsedMap, scoringMode, absoluteScaleMaxDays) {
   const signalDefinitionsByItem = items.map((item) =>
     getSignalDefinitions(item, timeInColumnElapsedMap)
   );
 
-  const globalMaxDurationMs = getGlobalMaxDurationMs(signalDefinitionsByItem);
+  const globalMaxDurationMs =
+    scoringMode === 'relative'
+      ? getGlobalMaxDurationMs(signalDefinitionsByItem)
+      : null;
+
+  const absoluteScaleMaxMs = absoluteScaleMaxDays * 24 * 60 * 60 * 1000;
 
   return items.map((item, index) => {
     const baseSignals = signalDefinitionsByItem[index];
 
     const signals = Object.fromEntries(
       Object.entries(baseSignals).map(([key, signal]) => {
-        const score = signal.isAvailable
-          ? normaliseDurationToScore(signal.durationMs, globalMaxDurationMs)
-          : null;
+        let score = null;
+
+        if (signal.isAvailable) {
+          score =
+            scoringMode === 'absolute'
+              ? normaliseDurationToAbsoluteScore(signal.durationMs, absoluteScaleMaxMs)
+              : normaliseDurationToRelativeScore(signal.durationMs, globalMaxDurationMs);
+        }
 
         return [
           key,
@@ -455,9 +558,9 @@ function buildSignalEntries(items, timeInColumnElapsedMap) {
   });
 }
 
-function getVoiceEligibleSignals(entry) {
+function getVoiceEligibleSignals(entry, voiceSignalThreshold) {
   return Object.values(entry.signals)
-    .filter((signal) => signal.isAvailable && Number(signal.score) >= VOICE_SIGNAL_THRESHOLD)
+    .filter((signal) => signal.isAvailable && Number(signal.score) >= voiceSignalThreshold)
     .sort((a, b) => {
       const scoreDiff = (b.score || 0) - (a.score || 0);
       if (scoreDiff !== 0) {
@@ -473,8 +576,8 @@ function getVoiceEligibleSignals(entry) {
     });
 }
 
-function getPrimarySignal(entry) {
-  const voiceEligible = getVoiceEligibleSignals(entry);
+function getPrimarySignal(entry, voiceSignalThreshold) {
+  const voiceEligible = getVoiceEligibleSignals(entry, voiceSignalThreshold);
   if (voiceEligible.length) {
     return voiceEligible[0];
   }
@@ -517,14 +620,14 @@ function buildSpeechFromSignals(signals, title) {
   return [...complaintSentences, title].join(' ');
 }
 
-function sortEntriesForPlayback(entries) {
+function sortEntriesForPlayback(entries, voiceSignalThreshold) {
   return [...entries].sort((a, b) => {
     if (b.frustrationScore !== a.frustrationScore) {
       return b.frustrationScore - a.frustrationScore;
     }
 
-    const aPrimary = getPrimarySignal(a);
-    const bPrimary = getPrimarySignal(b);
+    const aPrimary = getPrimarySignal(a, voiceSignalThreshold);
+    const bPrimary = getPrimarySignal(b, voiceSignalThreshold);
 
     if ((bPrimary.score || 0) !== (aPrimary.score || 0)) {
       return (bPrimary.score || 0) - (aPrimary.score || 0);
@@ -538,17 +641,122 @@ function sortEntriesForPlayback(entries) {
   });
 }
 
+async function playQueueFromCurrentState(voiceSignalThreshold) {
+  while (runState.currentQueueIndex < runState.queue.length) {
+    ensureNotStopped();
+
+    if (runState.isPaused) {
+      return { ok: true, paused: true, count: runState.currentQueueIndex };
+    }
+
+    if (runState.currentQueueIndex > 0 && runState.currentHighlightedTicketId) {
+      await clearCurrentHighlightIfAny();
+    }
+
+    const entry = runState.queue[runState.currentQueueIndex];
+    const id = entry.item.id;
+    const title = entry.item.fields['System.Title'] || 'Untitled work item';
+    const voiceSignals = getVoiceEligibleSignals(entry, voiceSignalThreshold);
+    const primarySignal = voiceSignals[0] || getPrimarySignal(entry, voiceSignalThreshold);
+
+    setRunState({
+      currentHighlightedTicketId: id,
+      currentTicket: {
+        title,
+        reason: buildReasonFromSignal(primarySignal),
+        frustrationScore: entry.frustrationScore,
+        signals: {
+          lastUpdated: {
+            label: entry.signals.lastUpdated.label,
+            rawValue: entry.signals.lastUpdated.rawValue,
+            score: entry.signals.lastUpdated.score,
+            isAvailable: entry.signals.lastUpdated.isAvailable
+          },
+          timeInColumn: {
+            label: entry.signals.timeInColumn.label,
+            rawValue: entry.signals.timeInColumn.rawValue,
+            score: entry.signals.timeInColumn.score,
+            isAvailable: entry.signals.timeInColumn.isAvailable
+          }
+        }
+      },
+      statusMessage: `Reading ticket ${id}...`
+    });
+
+    try {
+      await sendTabMessage(runState.currentTabId, {
+        type: 'SCROLL_TICKET_INTO_VIEW',
+        workItemId: id
+      });
+    } catch (error) {
+      console.warn('Scroll failed', id, error);
+    }
+
+    try {
+      await sendTabMessage(runState.currentTabId, {
+        type: 'HIGHLIGHT_TICKET',
+        workItemId: id
+      });
+    } catch (error) {
+      console.warn('Highlight failed', id, error);
+    }
+
+    await speak(buildSpeechFromSignals(voiceSignals, title));
+    ensureNotStopped();
+
+    runState.currentQueueIndex += 1;
+
+    if (runState.pauseRequested) {
+      setRunState({
+        isRunning: false,
+        isPaused: true,
+        pauseRequested: false,
+        statusMessage: 'Paused. Ready to resume.'
+      });
+      return { ok: true, paused: true, count: runState.currentQueueIndex };
+    }
+
+    try {
+      await sendTabMessage(runState.currentTabId, {
+        type: 'CLEAR_HIGHLIGHT_TICKET',
+        workItemId: id
+      });
+    } catch (error) {
+      console.warn('Clear highlight failed', id, error);
+    }
+
+    setRunState({
+      currentHighlightedTicketId: null,
+      statusMessage: 'Moving to next ticket...'
+    });
+  }
+
+  setRunState({
+    isRunning: false,
+    isPaused: false,
+    pauseRequested: false,
+    currentHighlightedTicketId: null,
+    statusMessage: `Done. Spoke ${runState.currentQueueIndex} ticket(s).`
+  });
+
+  return { ok: true, count: runState.currentQueueIndex };
+}
+
 async function runChatterBoard({ tabId, url }) {
-  if (runState.isRunning) {
-    throw new Error('ChatterBoard is already running.');
+  if (runState.isRunning || runState.isPaused) {
+    throw new Error('ChatterBoard is already running or paused.');
   }
 
   setRunState({
     isRunning: true,
+    isPaused: false,
+    pauseRequested: false,
     stopRequested: false,
     currentTabId: tabId,
     currentHighlightedTicketId: null,
     currentTicket: null,
+    queue: [],
+    currentQueueIndex: 0,
     statusMessage: 'Starting...'
   });
 
@@ -557,8 +765,14 @@ async function runChatterBoard({ tabId, url }) {
       throw new Error('Missing tabId or url.');
     }
 
-    const stored = await chrome.storage.sync.get(['adoPat']);
-    const adoPat = (stored.adoPat || '').trim();
+    const settings = await getRuntimeSettings();
+    const {
+      adoPat,
+      voiceSignalThreshold,
+      scoringMode,
+      absoluteScaleMaxDays,
+      maxTicketsToSpeak
+    } = settings;
 
     if (!adoPat) {
       throw new Error('No Azure DevOps PAT found in Options.');
@@ -579,6 +793,7 @@ async function runChatterBoard({ tabId, url }) {
 
     if (!ids.length) {
       setRunState({
+        isRunning: false,
         statusMessage: 'No active visible work items found on the current board.'
       });
       await speak('No active work items found.');
@@ -607,98 +822,46 @@ async function runChatterBoard({ tabId, url }) {
 
     ensureNotStopped();
 
-    const entries = buildSignalEntries(items, timeInColumnElapsedMap);
-    const speakingEntries = entries.filter((entry) => getVoiceEligibleSignals(entry).length > 0);
-    const sortedEntries = sortEntriesForPlayback(speakingEntries);
-    const selected = sortedEntries.slice(0, MAX_TICKETS_TO_SPEAK);
+    const entries = buildSignalEntries(
+      items,
+      timeInColumnElapsedMap,
+      scoringMode,
+      absoluteScaleMaxDays
+    );
+
+    const speakingEntries = entries.filter(
+      (entry) => getVoiceEligibleSignals(entry, voiceSignalThreshold).length > 0
+    );
+
+    const sortedEntries = sortEntriesForPlayback(speakingEntries, voiceSignalThreshold);
+    const selected = sortedEntries.slice(0, maxTicketsToSpeak);
 
     if (!selected.length) {
       setRunState({
+        isRunning: false,
         statusMessage: 'No tickets met the voice threshold.'
       });
       return { ok: true, count: 0 };
     }
 
-    for (const entry of selected) {
-      ensureNotStopped();
-
-      const id = entry.item.id;
-      const title = entry.item.fields['System.Title'] || 'Untitled work item';
-      const voiceSignals = getVoiceEligibleSignals(entry);
-      const primarySignal = voiceSignals[0] || getPrimarySignal(entry);
-
-      setRunState({
-        currentHighlightedTicketId: id,
-        currentTicket: {
-          title,
-          reason: buildReasonFromSignal(primarySignal),
-          frustrationScore: entry.frustrationScore,
-          signals: {
-            lastUpdated: {
-              label: entry.signals.lastUpdated.label,
-              rawValue: entry.signals.lastUpdated.rawValue,
-              score: entry.signals.lastUpdated.score,
-              isAvailable: entry.signals.lastUpdated.isAvailable
-            },
-            timeInColumn: {
-              label: entry.signals.timeInColumn.label,
-              rawValue: entry.signals.timeInColumn.rawValue,
-              score: entry.signals.timeInColumn.score,
-              isAvailable: entry.signals.timeInColumn.isAvailable
-            }
-          }
-        },
-        statusMessage: `Reading ticket ${id}...`
-      });
-
-      try {
-        await sendTabMessage(tabId, {
-          type: 'SCROLL_TICKET_INTO_VIEW',
-          workItemId: id
-        });
-      } catch (error) {
-        console.warn('Scroll failed', id, error);
-      }
-
-      try {
-        await sendTabMessage(tabId, {
-          type: 'HIGHLIGHT_TICKET',
-          workItemId: id
-        });
-      } catch (error) {
-        console.warn('Highlight failed', id, error);
-      }
-
-      await speak(buildSpeechFromSignals(voiceSignals, title));
-      ensureNotStopped();
-
-      try {
-        await sendTabMessage(tabId, {
-          type: 'CLEAR_HIGHLIGHT_TICKET',
-          workItemId: id
-        });
-      } catch (error) {
-        console.warn('Clear highlight failed', id, error);
-      }
-
-      setRunState({
-        currentHighlightedTicketId: null,
-        currentTicket: null,
-        statusMessage: 'Moving to next ticket...'
-      });
-    }
-
     setRunState({
-      statusMessage: `Done. Spoke ${selected.length} ticket(s).`
+      queue: selected,
+      currentQueueIndex: 0
     });
 
-    return { ok: true, count: selected.length };
+    return await playQueueFromCurrentState(voiceSignalThreshold);
   } catch (error) {
     if (error.message === 'Run stopped by user.') {
       await clearCurrentHighlightIfAny();
       setRunState({
+        isRunning: false,
+        isPaused: false,
+        pauseRequested: false,
+        stopRequested: false,
         currentHighlightedTicketId: null,
         currentTicket: null,
+        queue: [],
+        currentQueueIndex: 0,
         statusMessage: 'Stopped.'
       });
       return { ok: true, count: 0, stopped: true };
@@ -706,19 +869,70 @@ async function runChatterBoard({ tabId, url }) {
 
     await clearCurrentHighlightIfAny();
     setRunState({
+      isRunning: false,
+      isPaused: false,
+      pauseRequested: false,
       currentHighlightedTicketId: null,
       currentTicket: null,
+      queue: [],
+      currentQueueIndex: 0,
       statusMessage: `Error: ${error.message}`
     });
     throw error;
   } finally {
+    runState.stopRequested = false;
+  }
+}
+
+async function resumeChatterBoard() {
+  if (!runState.isPaused) {
+    throw new Error('ChatterBoard is not paused.');
+  }
+
+  const settings = await getRuntimeSettings();
+  const { voiceSignalThreshold } = settings;
+
+  setRunState({
+    isRunning: true,
+    isPaused: false,
+    pauseRequested: false,
+    stopRequested: false,
+    statusMessage: 'Resuming...'
+  });
+
+  try {
+    return await playQueueFromCurrentState(voiceSignalThreshold);
+  } catch (error) {
+    if (error.message === 'Run stopped by user.') {
+      await clearCurrentHighlightIfAny();
+      setRunState({
+        isRunning: false,
+        isPaused: false,
+        pauseRequested: false,
+        stopRequested: false,
+        currentHighlightedTicketId: null,
+        currentTicket: null,
+        queue: [],
+        currentQueueIndex: 0,
+        statusMessage: 'Stopped.'
+      });
+      return { ok: true, count: 0, stopped: true };
+    }
+
+    await clearCurrentHighlightIfAny();
     setRunState({
       isRunning: false,
-      stopRequested: false,
-      currentTabId: null,
+      isPaused: false,
+      pauseRequested: false,
       currentHighlightedTicketId: null,
-      currentTicket: null
+      currentTicket: null,
+      queue: [],
+      currentQueueIndex: 0,
+      statusMessage: `Error: ${error.message}`
     });
+    throw error;
+  } finally {
+    runState.stopRequested = false;
   }
 }
 
@@ -736,10 +950,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'PAUSE_CHATTERBOARD') {
+    try {
+      requestPause();
+      sendResponse({ ok: true });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (message?.type === 'RESUME_CHATTERBOARD') {
+    resumeChatterBoard()
+      .then(sendResponse)
+      .catch((error) => {
+        sendResponse({ ok: false, error: error.message });
+      });
+
+    return true;
+  }
+
   if (message?.type === 'STOP_CHATTERBOARD') {
     requestStop();
     clearCurrentHighlightIfAny()
       .then(() => {
+        setRunState({
+          currentHighlightedTicketId: null,
+          currentTicket: null,
+          queue: [],
+          currentQueueIndex: 0
+        });
         sendResponse({ ok: true });
       })
       .catch((error) => {
@@ -754,6 +994,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       ok: true,
       state: {
         isRunning: runState.isRunning,
+        isPaused: runState.isPaused,
+        pauseRequested: runState.pauseRequested,
         stopRequested: runState.stopRequested,
         currentTabId: runState.currentTabId,
         currentHighlightedTicketId: runState.currentHighlightedTicketId,

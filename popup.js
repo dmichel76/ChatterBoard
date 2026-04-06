@@ -1,6 +1,15 @@
+const DEFAULT_SETTINGS = {
+  scoringMode: 'relative',
+  absoluteScaleMaxDays: 30
+};
+
 const statusEl = document.getElementById('status');
 const playButton = document.getElementById('playButton');
+const pauseButton = document.getElementById('pauseButton');
 const stopButton = document.getElementById('stopButton');
+
+const scaleInfoEl = document.getElementById('scaleInfo');
+const scaleInfoValueEl = document.getElementById('scaleInfoValue');
 
 const nowReadingPanelEl = document.getElementById('nowReadingPanel');
 const frustrationScoreEl = document.getElementById('frustrationScore');
@@ -104,14 +113,51 @@ function setCurrentTicket(ticket) {
   nowReadingPanelEl.classList.remove('hidden');
 }
 
+function formatScaleInfo(settings) {
+  const scoringMode = settings?.scoringMode === 'absolute' ? 'absolute' : 'relative';
+  const absoluteScaleMaxDays = Number.isFinite(Number(settings?.absoluteScaleMaxDays))
+    ? Math.max(1, Math.round(Number(settings.absoluteScaleMaxDays)))
+    : DEFAULT_SETTINGS.absoluteScaleMaxDays;
+
+  if (scoringMode === 'absolute') {
+    return `Absolute, 100 = ${absoluteScaleMaxDays} day${absoluteScaleMaxDays === 1 ? '' : 's'}`;
+  }
+
+  return 'Relative, 100 = worst active visible duration on this board';
+}
+
+function setScaleInfo(settings) {
+  scaleInfoValueEl.textContent = formatScaleInfo(settings || DEFAULT_SETTINGS);
+  scaleInfoEl.classList.remove('hidden');
+}
+
+async function loadSettings() {
+  const stored = await chrome.storage.sync.get(['scoringMode', 'absoluteScaleMaxDays']);
+  setScaleInfo({
+    scoringMode: stored.scoringMode,
+    absoluteScaleMaxDays: stored.absoluteScaleMaxDays
+  });
+}
+
 function applyState(state) {
   if (!state) return;
 
   setStatus(state.statusMessage || 'Idle.');
   setCurrentTicket(state.currentTicket || null);
 
-  playButton.disabled = !!state.isRunning;
-  stopButton.disabled = !state.isRunning;
+  playButton.disabled = !!state.isRunning || !!state.isPaused;
+  stopButton.disabled = !state.isRunning && !state.isPaused;
+
+  if (state.isPaused) {
+    pauseButton.disabled = false;
+    pauseButton.textContent = 'Resume';
+  } else if (state.isRunning) {
+    pauseButton.disabled = false;
+    pauseButton.textContent = state.pauseRequested ? 'Pause...' : 'Pause';
+  } else {
+    pauseButton.disabled = true;
+    pauseButton.textContent = 'Pause';
+  }
 }
 
 async function loadState() {
@@ -138,6 +184,7 @@ playButton.addEventListener('click', async () => {
   try {
     setStatus('Running...');
     setCurrentTicket(null);
+    await loadSettings();
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !tab.url) {
@@ -166,7 +213,68 @@ playButton.addEventListener('click', async () => {
       return;
     }
 
+    if (response.paused) {
+      setStatus('Paused. Ready to resume.');
+      return;
+    }
+
     setStatus(`Done. Spoke ${response.count} ticket(s).`);
+  } catch (error) {
+    setStatus(`Error: ${error.message}`);
+  } finally {
+    await loadSettings();
+    await loadState();
+  }
+});
+
+pauseButton.addEventListener('click', async () => {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'GET_CHATTERBOARD_STATE'
+    });
+
+    if (!response?.ok) {
+      setStatus('Could not read current state.');
+      return;
+    }
+
+    const state = response.state;
+
+    if (state.isPaused) {
+      setStatus('Resuming...');
+      const resumeResponse = await chrome.runtime.sendMessage({
+        type: 'RESUME_CHATTERBOARD'
+      });
+
+      if (!resumeResponse?.ok) {
+        setStatus(resumeResponse?.error || 'Could not resume ChatterBoard.');
+        return;
+      }
+
+      if (resumeResponse.stopped) {
+        setStatus('Stopped.');
+        return;
+      }
+
+      if (resumeResponse.paused) {
+        setStatus('Paused. Ready to resume.');
+        return;
+      }
+
+      setStatus(`Done. Spoke ${resumeResponse.count} ticket(s).`);
+      return;
+    }
+
+    if (state.isRunning) {
+      setStatus('Pausing after current ticket...');
+      const pauseResponse = await chrome.runtime.sendMessage({
+        type: 'PAUSE_CHATTERBOARD'
+      });
+
+      if (!pauseResponse?.ok) {
+        setStatus(pauseResponse?.error || 'Could not pause ChatterBoard.');
+      }
+    }
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
@@ -187,14 +295,15 @@ stopButton.addEventListener('click', async () => {
     }
 
     setStatus('Stopped.');
-    setCurrentTicket(null);
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
+    await loadSettings();
     await loadState();
   }
 });
 
 resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 'Last updated');
 resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
+loadSettings();
 loadState();

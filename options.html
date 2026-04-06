@@ -5,13 +5,52 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ChatterBoard Options</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
-    h1 { margin-bottom: 16px; }
-    label { display: block; margin-top: 14px; font-weight: bold; }
-    input { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 10px; }
-    button { margin-top: 20px; padding: 10px 16px; cursor: pointer; }
-    .hint { color: #555; font-size: 12px; }
-    .status { margin-top: 16px; }
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 760px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
+
+    h1 {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      margin-top: 14px;
+      font-weight: bold;
+    }
+
+    input,
+    select {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 6px;
+      padding: 10px;
+    }
+
+    button {
+      margin-top: 20px;
+      padding: 10px 16px;
+      cursor: pointer;
+    }
+
+    .hint {
+      color: #555;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .status {
+      margin-top: 16px;
+    }
+
+    .section {
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid #ddd;
+    }
   </style>
 </head>
 <body>
@@ -20,6 +59,35 @@
   <label for="adoPat">Azure DevOps PAT</label>
   <input id="adoPat" type="password" placeholder="Personal Access Token" />
   <div class="hint">Minimum scope for MVP: Work Items (Read).</div>
+
+  <div class="section">
+    <label for="voiceSignalThreshold">Voice threshold</label>
+    <input id="voiceSignalThreshold" type="number" min="0" max="100" step="1" />
+    <div class="hint">
+      Signals at or above this score will be spoken. Default: 75.
+    </div>
+
+    <label for="scoringMode">Time-based scoring mode</label>
+    <select id="scoringMode">
+      <option value="relative">Relative, based on the worst active visible ticket on the board</option>
+      <option value="absolute">Absolute, based on a fixed day scale</option>
+    </select>
+    <div class="hint">
+      Relative compares tickets against each other. Absolute compares durations against a fixed baseline.
+    </div>
+
+    <label for="absoluteScaleMaxDays">Absolute scale max days</label>
+    <input id="absoluteScaleMaxDays" type="number" min="1" max="3650" step="1" />
+    <div class="hint">
+      In absolute mode, this many days maps to a score of 100. Default: 30.
+    </div>
+
+    <label for="maxTicketsToSpeak">Maximum tickets spoken</label>
+    <input id="maxTicketsToSpeak" type="number" min="1" max="50" step="1" />
+    <div class="hint">
+      ChatterBoard will speak up to this many tickets in one run. Default: 5.
+    </div>
+  </div>
 
   <button id="saveButton">Save</button>
   <div id="status" class="status"></div>
