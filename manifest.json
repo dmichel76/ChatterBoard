@@ -9,9 +9,19 @@
     "https://*.visualstudio.com/*",
     "https://api.elevenlabs.io/*"
   ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ChatterBoard"
+    "default_title": "ChatterBoard",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "background": {
     "service_worker": "background.js"

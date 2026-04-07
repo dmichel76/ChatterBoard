@@ -15,7 +15,20 @@
 
     h1 {
       font-size: 18px;
-      margin: 0 0 12px;
+      margin: 0;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .header-logo {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
     }
 
     .button-row {
@@ -190,7 +203,10 @@
   </style>
 </head>
 <body>
-  <h1>ChatterBoard MVP</h1>
+  <div class="header">
+    <h1>ChatterBoard</h1>
+    <img src="icons/icon48.png" class="header-logo" alt="ChatterBoard" />
+  </div>
 
   <div class="button-row">
     <button id="startButton">Start</button>
