@@ -1,10 +1,10 @@
-I've been in this column for {duration}. Taking my time here.
-Hanging out in this column for {duration} now. It's cozy.
-{duration} in this column. Just enjoying the view.
-I've been stuck in this column for {duration}. Getting a bit stale.
-{duration} in this same spot. Can we move things along?
-Sitting in this column for {duration}. This is taking forever.
-I've been trapped here for {duration}. Someone please move me!
-{duration} in this column and counting. This is painful.
-Stuck in this column for {duration}. This is beyond a joke.
-I've been rotting in this column for {duration}. Completely abandoned.
+I've been in {column} for {duration}. Taking my time here.
+Hanging out in {column} for {duration} now. It's cozy.
+{duration} in {column}. Just enjoying the view.
+I've been stuck in {column} for {duration}. Getting a bit stale.
+{duration} in {column}. Can we move things along?
+Sitting in {column} for {duration}. This is taking forever.
+I've been trapped in {column} for {duration}. Someone please move me!
+{duration} in {column} and counting. This is painful.
+Stuck in {column} for {duration}. This is beyond a joke.
+I've been rotting in {column} for {duration}. Completely abandoned.

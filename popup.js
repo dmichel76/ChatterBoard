@@ -343,3 +343,19 @@ resetSignalDisplay(lastUpdatedLabelEl, lastUpdatedRawValueEl, lastUpdatedBarEl, 
 resetSignalDisplay(timeInColumnLabelEl, timeInColumnRawValueEl, timeInColumnBarEl, 'Time in column');
 resetSignalDisplay(timeInProgressLabelEl, timeInProgressRawValueEl, timeInProgressBarEl, 'Time in progress');
 loadState();
+
+// Populate mode indicator pills from stored settings
+const pillTemplates = document.getElementById('pillTemplates');
+const pillAiText = document.getElementById('pillAiText');
+const pillChromeTts = document.getElementById('pillChromeTts');
+const pillAiVoice = document.getElementById('pillAiVoice');
+
+chrome.storage.sync.get(['speechMode', 'voiceEngine'], (stored) => {
+  const isAiSpeech = stored.speechMode === 'ai';
+  pillAiText.className = `mode-pill ${isAiSpeech ? 'active' : 'inactive'}`;
+  pillTemplates.className = `mode-pill ${isAiSpeech ? 'inactive' : 'active'}`;
+
+  const isAiVoice = stored.voiceEngine === 'ai';
+  pillAiVoice.className = `mode-pill ${isAiVoice ? 'active' : 'inactive'}`;
+  pillChromeTts.className = `mode-pill ${isAiVoice ? 'inactive' : 'active'}`;
+});

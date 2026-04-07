@@ -10,6 +10,7 @@
       width: 340px;
       padding: 16px;
       box-sizing: border-box;
+      background: #f4f6f9;
     }
 
     h1 {
@@ -144,6 +145,37 @@
       width: 100% !important;
       background: #cfcfcf !important;
     }
+    .mode-bar {
+      display: flex;
+      gap: 6px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .mode-separator {
+      color: #ccc;
+      font-size: 10px;
+    }
+
+    .mode-pill {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-weight: bold;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .mode-pill.active {
+      background: #e8f0fe;
+      color: #1a56b0;
+    }
+
+    .mode-pill.inactive {
+      background: #eeeeee;
+      color: #bbb;
+    }
   </style>
 </head>
 <body>
@@ -201,6 +233,14 @@
         <div id="timeInProgressBar" class="signal-fill"></div>
       </div>
     </div>
+  </div>
+
+  <div class="mode-bar">
+    <span id="pillTemplates" class="mode-pill inactive">Templates</span>
+    <span id="pillAiText" class="mode-pill inactive">AI text</span>
+    <span class="mode-separator">·</span>
+    <span id="pillChromeTts" class="mode-pill inactive">Chrome TTS</span>
+    <span id="pillAiVoice" class="mode-pill inactive">AI voice</span>
   </div>
 
   <script type="module" src="popup.js"></script>

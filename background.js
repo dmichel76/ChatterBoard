@@ -686,6 +686,7 @@ function getSignalDefinitions(item, timeInColumnElapsedMap, timeInProgressElapse
     timeInColumn: {
       key: 'timeInColumn',
       label: 'Time in column',
+      columnName: getBoardColumnFromFields(item.fields) || null,
       durationMs: timeInColumnDurationMs,
       rawValue: Number.isFinite(timeInColumnDurationMs)
         ? formatDurationShort(timeInColumnDurationMs)
@@ -881,8 +882,11 @@ async function buildVoiceSentenceFromSignal(signal, frustrationScore) {
   const tone = getToneCategory(frustrationScore);
   const template = getRandomSentenceForTone(sentences, tone);
   
-  // Replace {duration} placeholder with the actual speech value
-  return template.replace('{duration}', signal.speechValue);
+  // Replace {duration} and {column} placeholders with actual values
+  const columnName = signal.columnName || 'this column';
+  return template
+    .replace('{duration}', signal.speechValue)
+    .replace('{column}', columnName);
 }
 
 async function buildSpeechFromSignals(signals, title, frustrationScore) {
@@ -906,7 +910,10 @@ function buildOpenAIPrompt(entry) {
   const tone = toneMap[getToneCategory(score)] || 'direct';
 
   const signalLines = signals
-    .map((s) => `- ${s.label}: ${s.rawValue} (frustration score: ${s.score}/100)`)
+    .map((s) => {
+      const columnNote = s.key === 'timeInColumn' && s.columnName ? ` (column: '${s.columnName}')` : '';
+      return `- ${s.label}${columnNote}: ${s.rawValue} (frustration score: ${s.score}/100)`;
+    })
     .join('\n');
 
   return `You are announcing a stale ticket during a team stand-up. Be concise, ${tone}, and speak naturally. Do not say "ticket", do not mention IDs or scores. Speak in 1–2 sentences maximum.
@@ -1002,7 +1009,9 @@ async function navigateToTicket(index) {
           isAvailable: entry.signals.lastUpdated.isAvailable
         },
         timeInColumn: {
-          label: entry.signals.timeInColumn.label,
+          label: entry.signals.timeInColumn.columnName
+            ? `In '${entry.signals.timeInColumn.columnName}'`
+            : entry.signals.timeInColumn.label,
           rawValue: entry.signals.timeInColumn.rawValue,
           score: entry.signals.timeInColumn.score,
           isAvailable: entry.signals.timeInColumn.isAvailable
