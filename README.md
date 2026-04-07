@@ -110,8 +110,3 @@ Open the extension **Options** page and set:
 | `offscreen.js` / `offscreen.html` | Audio playback context for ElevenLabs (required by Chrome MV3) |
 | `sentences/` | Tone-matched sentence templates for each frustration signal |
 
----
-
-## Status
-
-Working prototype. Core loop is functional end-to-end.
