@@ -60,17 +60,11 @@ fields.voiceEngine.addEventListener('change', updateElevenLabsKeyState);
 fields.speechMode.addEventListener('change', updateOpenAiKeyState);
 
 async function loadOptions() {
-  const stored = await chrome.storage.sync.get([
-    'adoPat',
-    'openAiApiKey',
-    'speechMode',
-    'voiceEngine',
-    'elevenLabsApiKey',
-    'scoringMode',
-    'absoluteScaleMaxDays',
-    'maxTicketsToSpeak',
-    'tagsToIgnore'
+  const [syncStored, localStored] = await Promise.all([
+    chrome.storage.sync.get(['speechMode', 'voiceEngine', 'scoringMode', 'absoluteScaleMaxDays', 'maxTicketsToSpeak', 'tagsToIgnore']),
+    chrome.storage.local.get(['adoPat', 'openAiApiKey', 'elevenLabsApiKey'])
   ]);
+  const stored = { ...syncStored, ...localStored };
 
   fields.adoPat.value = stored.adoPat || DEFAULT_SETTINGS.adoPat;
   fields.speechMode.value = stored.speechMode === 'ai' ? 'ai' : 'templates';
@@ -123,17 +117,10 @@ async function saveOptions() {
   fields.tagsToIgnore.value = tagsToIgnore;
   fields.elevenLabsApiKey.value = elevenLabsApiKey;
 
-  await chrome.storage.sync.set({
-    adoPat,
-    openAiApiKey,
-    speechMode,
-    voiceEngine,
-    elevenLabsApiKey,
-    scoringMode,
-    absoluteScaleMaxDays,
-    maxTicketsToSpeak,
-    tagsToIgnore
-  });
+  await Promise.all([
+    chrome.storage.local.set({ adoPat, openAiApiKey, elevenLabsApiKey }),
+    chrome.storage.sync.set({ speechMode, voiceEngine, scoringMode, absoluteScaleMaxDays, maxTicketsToSpeak, tagsToIgnore })
+  ]);
 
   setStatus('Saved.');
 }

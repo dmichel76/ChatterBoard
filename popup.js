@@ -360,31 +360,33 @@ function applyVoiceMode(isAiVoice, hasElevenLabsKey) {
   pillChromeTts.className = `mode-pill ${isAiVoice && hasElevenLabsKey ? 'inactive' : 'active'}`;
 }
 
-chrome.storage.sync.get(['speechMode', 'voiceEngine', 'openAiApiKey', 'elevenLabsApiKey'], (stored) => {
-  const hasOpenAiKey = !!(stored.openAiApiKey || '').trim();
-  const hasElevenLabsKey = !!(stored.elevenLabsApiKey || '').trim();
-  applySpeechMode(stored.speechMode === 'ai', hasOpenAiKey);
-  applyVoiceMode(stored.voiceEngine === 'ai', hasElevenLabsKey);
+chrome.storage.sync.get(['speechMode', 'voiceEngine'], (syncStored) => {
+  chrome.storage.local.get(['openAiApiKey', 'elevenLabsApiKey'], (localStored) => {
+    const hasOpenAiKey = !!(localStored.openAiApiKey || '').trim();
+    const hasElevenLabsKey = !!(localStored.elevenLabsApiKey || '').trim();
+    applySpeechMode(syncStored.speechMode === 'ai', hasOpenAiKey);
+    applyVoiceMode(syncStored.voiceEngine === 'ai', hasElevenLabsKey);
+  });
 });
 
 pillTemplates.addEventListener('click', () => {
   chrome.storage.sync.set({ speechMode: 'templates' });
-  chrome.storage.sync.get(['openAiApiKey'], (s) => applySpeechMode(false, !!(s.openAiApiKey || '').trim()));
+  chrome.storage.local.get(['openAiApiKey'], (s) => applySpeechMode(false, !!(s.openAiApiKey || '').trim()));
 });
 
 pillAiText.addEventListener('click', () => {
   if (pillAiText.classList.contains('disabled')) return;
   chrome.storage.sync.set({ speechMode: 'ai' });
-  chrome.storage.sync.get(['openAiApiKey'], (s) => applySpeechMode(true, !!(s.openAiApiKey || '').trim()));
+  chrome.storage.local.get(['openAiApiKey'], (s) => applySpeechMode(true, !!(s.openAiApiKey || '').trim()));
 });
 
 pillChromeTts.addEventListener('click', () => {
   chrome.storage.sync.set({ voiceEngine: 'tts' });
-  chrome.storage.sync.get(['elevenLabsApiKey'], (s) => applyVoiceMode(false, !!(s.elevenLabsApiKey || '').trim()));
+  chrome.storage.local.get(['elevenLabsApiKey'], (s) => applyVoiceMode(false, !!(s.elevenLabsApiKey || '').trim()));
 });
 
 pillAiVoice.addEventListener('click', () => {
   if (pillAiVoice.classList.contains('disabled')) return;
   chrome.storage.sync.set({ voiceEngine: 'ai' });
-  chrome.storage.sync.get(['elevenLabsApiKey'], (s) => applyVoiceMode(true, !!(s.elevenLabsApiKey || '').trim()));
+  chrome.storage.local.get(['elevenLabsApiKey'], (s) => applyVoiceMode(true, !!(s.elevenLabsApiKey || '').trim()));
 });

@@ -65,17 +65,11 @@ function broadcastState() {
 }
 
 async function getRuntimeSettings() {
-  const stored = await chrome.storage.sync.get([
-    'adoPat',
-    'voiceEngine',
-    'elevenLabsApiKey',
-    'openAiApiKey',
-    'speechMode',
-    'scoringMode',
-    'absoluteScaleMaxDays',
-    'maxTicketsToSpeak',
-    'tagsToIgnore'
+  const [syncStored, localStored] = await Promise.all([
+    chrome.storage.sync.get(['voiceEngine', 'speechMode', 'scoringMode', 'absoluteScaleMaxDays', 'maxTicketsToSpeak', 'tagsToIgnore']),
+    chrome.storage.local.get(['adoPat', 'elevenLabsApiKey', 'openAiApiKey'])
   ]);
+  const stored = { ...syncStored, ...localStored };
 
   const maxTicketsToSpeak = clampNumber(
     stored.maxTicketsToSpeak,
@@ -126,9 +120,7 @@ function clampNumber(value, min, max, fallback) {
 }
 
 async function speakWithElevenLabs(text, apiKey, voiceId) {
-  // George (JBFqnCBsd6RMkjVDRZzb) is a free-tier compatible premade voice
   const resolvedVoiceId = voiceId || 'JBFqnCBsd6RMkjVDRZzb';
-  console.log('ElevenLabs: Attempting TTS with API key:', apiKey ? `${apiKey.substring(0, 8)}...` : 'NONE', '| Voice:', resolvedVoiceId);
 
   try {
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
@@ -243,9 +235,7 @@ function pickVoiceForTicket(ticketId) {
 
 async function speak(text, ticketId) {
   const settings = await getRuntimeSettings();
-  
-  console.log('Speak called with ElevenLabs API key:', settings.elevenLabsApiKey ? 'Present' : 'Not set');
-  
+
   // Try ElevenLabs if AI voice engine is selected and an API key is available
   if (settings.voiceEngine === 'ai' && settings.elevenLabsApiKey) {
     // If no manual voice override, pick a free premade voice based on ticket ID
