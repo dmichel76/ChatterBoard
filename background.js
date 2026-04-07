@@ -1,3 +1,22 @@
+// ElevenLabs default premade voices available on the free tier
+const FREE_ELEVENLABS_VOICES = [
+  'JBFqnCBsd6RMkjVDRZzb', // George
+  'EXAVITQu4vr4xnSDxMaL', // Sarah
+  'IKne3meq5aSn9XLyUdCD', // Charlie
+  'XB0fDUnXU5powFXDhCwa', // Charlotte
+  'Xb7hH8MSUJpSbSDYk0k2', // Alice
+  'XrExE9yKIg1WjnnlVkGX', // Matilda
+  'N2lVS1w4EtoT3dr4eOWO', // Callum
+  'TX3LPaxmHKxFdv7VOQHJ', // Liam
+  'nPczCjzI2devNBz1zQrb', // Brian
+  'onwK4e9ZLuTAKqWW03F9', // Daniel
+  'pFZP5JQG7iQjIQuC4Bku', // Lily
+  'bIHbv24MWmeRgasZH58o', // Will
+  '9BWtsMINqrJLrRacOk9x', // Aria
+  'CwhRBWXHgEUDjpjDnaoR', // Roger
+  'FGY2WhTYpPnrIDTdsKH5', // Laura
+];
+
 const DEFAULT_MAX_TICKETS_TO_SPEAK = 5;
 const DEFAULT_SCORING_MODE = 'relative';
 const DEFAULT_ABSOLUTE_SCALE_MAX_DAYS = 30;
@@ -170,8 +189,8 @@ async function playAudioViaOffscreen(base64Audio) {
     const listener = (message) => {
       if (message.type === 'ELEVENLABS_PLAYBACK_DONE') {
         chrome.runtime.onMessage.removeListener(listener);
-        console.log('ElevenLabs: Playback completed successfully:', message.success);
-        resolve(message.success);
+        // Intentional stop counts as success — don't fall back to Chrome TTS
+        resolve(message.stopped ? true : message.success);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -211,14 +230,24 @@ function speakWithChromeTTS(text) {
   });
 }
 
-async function speak(text) {
+function pickVoiceForTicket(ticketId) {
+  const numericId = parseInt(ticketId, 10);
+  const index = Number.isFinite(numericId)
+    ? numericId % FREE_ELEVENLABS_VOICES.length
+    : Math.floor(Math.random() * FREE_ELEVENLABS_VOICES.length);
+  return FREE_ELEVENLABS_VOICES[index];
+}
+
+async function speak(text, ticketId) {
   const settings = await getRuntimeSettings();
   
   console.log('Speak called with ElevenLabs API key:', settings.elevenLabsApiKey ? 'Present' : 'Not set');
   
   // Try ElevenLabs first if API key is available
   if (settings.elevenLabsApiKey) {
-    const success = await speakWithElevenLabs(text, settings.elevenLabsApiKey, settings.elevenLabsVoiceId);
+    // If no manual voice override, pick a free premade voice based on ticket ID
+    const voiceId = settings.elevenLabsVoiceId || pickVoiceForTicket(ticketId);
+    const success = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId);
     
     if (success) {
       return;
@@ -351,8 +380,18 @@ async function clearCurrentHighlightIfAny() {
   runState.currentHighlightedTicketId = null;
 }
 
-function stopChatterBoard() {
+async function stopCurrentSpeech() {
   chrome.tts.stop();
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT']
+  });
+  if (existingContexts.length) {
+    chrome.runtime.sendMessage({ type: 'STOP_ELEVENLABS_AUDIO' });
+  }
+}
+
+function stopChatterBoard() {
+  stopCurrentSpeech();
   clearCurrentHighlightIfAny();
   setRunState({
     isQueueLoaded: false,
@@ -861,6 +900,7 @@ async function navigateToTicket(index) {
     throw new Error('Invalid queue index.');
   }
 
+  await stopCurrentSpeech();
   await clearCurrentHighlightIfAny();
 
   const entry = runState.queue[index];
@@ -920,7 +960,7 @@ async function navigateToTicket(index) {
   }
 
   const speechText = await buildSpeechFromSignals(voiceSignals, title, entry.frustrationScore);
-  await speak(speechText);
+  await speak(speechText, id);
 }
 
 async function nextTicket() {
