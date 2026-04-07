@@ -16,6 +16,7 @@ It identifies tickets that may need attention, brings them into view on the boar
 - Sorts tickets by frustration score and queues them for playback
 - Scrolls each ticket into view and highlights the card
 - Reads the ticket aloud using either Chrome TTS or ElevenLabs AI voices
+- Generates unique narrations per ticket using OpenAI GPT-4o-mini (optional)
 
 ---
 
@@ -26,31 +27,38 @@ Each ticket is scored on up to three signals. Signals scoring below 50% of the s
 | Signal | What it measures |
 |---|---|
 | **Time since last updated** | How long since any change was made to the ticket |
-| **Time in column** | How long the ticket has been in its current board column |
+| **Time in column** | How long the ticket has been in its current board column (column name shown) |
 | **Time in progress** | How long since the ticket entered the configured in-progress column |
 
 Scoring can be **relative** (compared against the worst ticket currently on the board) or **absolute** (compared against a fixed number of days).
 
 ---
 
-## Voice options
+## Speech text
 
-ChatterBoard supports two voice engines, switchable from the Options page:
+ChatterBoard supports two modes for generating what gets spoken, switchable directly from the popup:
 
-- **Chrome built-in TTS** — works out of the box, no configuration needed
-- **ElevenLabs AI voices** — realistic AI voices using the ElevenLabs API. When no specific Voice ID is set, each ticket is automatically assigned a different free-tier voice based on its ticket ID, so the board feels varied. You can pin a single voice by entering a Voice ID.
+- **Templates** (default) — curated tone-matched sentences, no API key needed. Phrasing scales from mild to alarmed based on frustration score. Includes the column name where relevant.
+- **AI-generated** — unique narration per ticket using OpenAI GPT-4o-mini. All queued tickets are generated in parallel before playback starts. Falls back to templates if OpenAI is unavailable.
 
 ---
 
-## spoken output
+## Voice options
 
-For each ticket, ChatterBoard speaks:
-- The ticket title
-- One sentence per strong frustration signal, with phrasing that varies based on the severity (tone-matched from a curated sentence list)
+Two voice engines, switchable directly from the popup:
 
-Example:
+- **Chrome built-in TTS** (default) — works out of the box, no configuration needed
+- **ElevenLabs AI voices** — realistic AI voices using the ElevenLabs API. Each ticket is automatically assigned a different free-tier voice based on its ticket ID so the board feels varied. You can pin a single voice by entering a Voice ID in Options.
 
-> Android - Unable to focus the save icon when using TalkBack. This one has been gathering dust for 3 weeks and nobody's touched it.
+---
+
+## Popup mode pills
+
+The popup shows four clickable pills at the bottom:
+
+`Templates` · `AI text` · `Chrome TTS` · `AI voice`
+
+The active mode is highlighted blue; the inactive option is greyed out. Click any pill to switch modes instantly without opening Options.
 
 ---
 
@@ -69,9 +77,11 @@ Open the extension **Options** page and set:
 | Setting | Required | Description |
 |---|---|---|
 | Azure DevOps PAT | Yes | Minimum scope: Work Items (Read) |
+| OpenAI API Key | If using AI text | From platform.openai.com |
+| Speech text mode | — | Templates (default) or AI-generated |
 | Voice engine | — | Chrome TTS (default) or ElevenLabs |
 | ElevenLabs API Key | If using AI voices | From elevenlabs.io |
-| ElevenLabs Voice ID | No | Leave blank to assign voices automatically |
+| ElevenLabs Voice ID | No | Leave blank to assign voices automatically per ticket |
 | Scoring mode | — | Relative or Absolute |
 | Absolute scale max days | If absolute mode | Days that map to a score of 100 (default: 30) |
 | Maximum tickets spoken | — | How many tickets to queue per run (default: 5) |
@@ -82,9 +92,10 @@ Open the extension **Options** page and set:
 
 1. Open an Azure DevOps board page
 2. Click the ChatterBoard extension icon
-3. Press **Play** to load and speak the queue
-4. Use **Next** / **Prev** to navigate manually
+3. Press **Start** to load and speak the queue
+4. Use **Next** / **Previous** to navigate manually
 5. Press **Clear** to reset
+6. Click the mode pills to switch between Templates/AI text or Chrome TTS/AI voice on the fly
 
 ---
 
@@ -92,9 +103,9 @@ Open the extension **Options** page and set:
 
 | File | Purpose |
 |---|---|
-| `background.js` | API calls, scoring, speech orchestration |
+| `background.js` | API calls, scoring, speech orchestration, OpenAI generation |
 | `content.js` | DOM interaction — finds cards, scrolls, highlights |
-| `popup.js` / `popup.html` | Extension popup UI |
+| `popup.js` / `popup.html` | Extension popup UI with mode pills |
 | `options.js` / `options.html` | Settings page |
 | `offscreen.js` / `offscreen.html` | Audio playback context for ElevenLabs (required by Chrome MV3) |
 | `sentences/` | Tone-matched sentence templates for each frustration signal |
