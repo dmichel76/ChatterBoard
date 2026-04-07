@@ -640,7 +640,7 @@ function getSignalDefinitions(item, timeInColumnElapsedMap, timeInStateElapsedMa
     },
     timeInProgress: {
       key: 'timeInProgress',
-      label: currentState ? `In '${currentState}'` : 'Time in state',
+      label: currentState ? `In '${currentState}' state` : 'Time in state',
       durationMs: timeInStateDurationMs,
       rawValue: Number.isFinite(timeInStateDurationMs)
         ? formatDurationShort(timeInStateDurationMs)
@@ -952,7 +952,7 @@ async function navigateToTicket(index) {
         },
         timeInColumn: {
           label: entry.signals.timeInColumn.columnName
-            ? `In '${entry.signals.timeInColumn.columnName}'`
+            ? `In '${entry.signals.timeInColumn.columnName}' column`
             : entry.signals.timeInColumn.label,
           rawValue: entry.signals.timeInColumn.rawValue,
           score: entry.signals.timeInColumn.score,
