@@ -8,8 +8,7 @@ const DEFAULT_SETTINGS = {
   scoringMode: 'relative',
   absoluteScaleMaxDays: 30,
   maxTicketsToSpeak: 5,
-  tagsToIgnore: '',
-  inProgressColumnName: ''
+  tagsToIgnore: ''
 };
 
 const fields = {
@@ -22,8 +21,7 @@ const fields = {
   scoringMode: document.getElementById('scoringMode'),
   absoluteScaleMaxDays: document.getElementById('absoluteScaleMaxDays'),
   maxTicketsToSpeak: document.getElementById('maxTicketsToSpeak'),
-  tagsToIgnore: document.getElementById('tagsToIgnore'),
-  inProgressColumnName: document.getElementById('inProgressColumnName')
+  tagsToIgnore: document.getElementById('tagsToIgnore')
 };
 
 const statusEl = document.getElementById('status');
@@ -57,8 +55,7 @@ async function loadOptions() {
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
-    'tagsToIgnore',
-    'inProgressColumnName'
+    'tagsToIgnore'
   ]);
 
   fields.adoPat.value = stored.adoPat || DEFAULT_SETTINGS.adoPat;
@@ -81,7 +78,6 @@ async function loadOptions() {
     DEFAULT_SETTINGS.maxTicketsToSpeak
   );
   fields.tagsToIgnore.value = stored.tagsToIgnore || DEFAULT_SETTINGS.tagsToIgnore;
-  fields.inProgressColumnName.value = stored.inProgressColumnName || DEFAULT_SETTINGS.inProgressColumnName;
 }
 
 async function saveOptions() {
@@ -106,13 +102,11 @@ async function saveOptions() {
     DEFAULT_SETTINGS.maxTicketsToSpeak
   );
   const tagsToIgnore = fields.tagsToIgnore.value.trim();
-  const inProgressColumnName = fields.inProgressColumnName.value.trim();
 
   fields.scoringMode.value = scoringMode;
   fields.absoluteScaleMaxDays.value = String(absoluteScaleMaxDays);
   fields.maxTicketsToSpeak.value = String(maxTicketsToSpeak);
   fields.tagsToIgnore.value = tagsToIgnore;
-  fields.inProgressColumnName.value = inProgressColumnName;
   fields.elevenLabsApiKey.value = elevenLabsApiKey;
   fields.elevenLabsVoiceId.value = elevenLabsVoiceId;
 
@@ -126,8 +120,7 @@ async function saveOptions() {
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,
-    tagsToIgnore,
-    inProgressColumnName
+    tagsToIgnore
   });
 
   setStatus('Saved.');

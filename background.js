@@ -75,8 +75,7 @@ async function getRuntimeSettings() {
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
-    'tagsToIgnore',
-    'inProgressColumnName'
+    'tagsToIgnore'
   ]);
 
   const maxTicketsToSpeak = clampNumber(
@@ -104,7 +103,6 @@ async function getRuntimeSettings() {
   const openAiApiKey = (stored.openAiApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
   const speechMode = stored.speechMode === 'ai' ? 'ai' : 'templates';
   const tagsToIgnore = (stored.tagsToIgnore || '').trim();
-  const inProgressColumnName = (stored.inProgressColumnName || '').trim();
 
   return {
     adoPat,
@@ -116,8 +114,7 @@ async function getRuntimeSettings() {
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,
-    tagsToIgnore,
-    inProgressColumnName
+    tagsToIgnore
   };
 }
 
@@ -573,37 +570,13 @@ async function getElapsedMsSinceEnteredCurrentColumn({ org, project, adoPat, ite
   return Math.max(0, Date.now() - firstMatchingTime);
 }
 
-async function getElapsedMsSinceEnteredInProgressColumn({ org, project, adoPat, item, inProgressColumnName }) {
-  if (!inProgressColumnName) {
+function getElapsedMsSinceStateChanged(item) {
+  const stateChangeDate = item.fields['Microsoft.VSTS.Common.StateChangeDate'];
+  if (!stateChangeDate) {
     return null;
   }
-
-  const revisionsData = await fetchWorkItemRevisions({
-    org,
-    project,
-    adoPat,
-    id: item.id
-  });
-
-  const revisions = revisionsData.value || [];
-  if (!revisions.length) {
-    return null;
-  }
-
-  // Find the first time the item entered the in-progress column
-  for (let i = 0; i < revisions.length; i += 1) {
-    const revisionColumn = getBoardColumnFromFields(revisions[i].fields);
-    
-    if (revisionColumn === inProgressColumnName) {
-      const entryTime = getChangedTimeFromFields(revisions[i].fields);
-      if (entryTime == null) {
-        return null;
-      }
-      return Math.max(0, Date.now() - entryTime);
-    }
-  }
-
-  return null;
+  const t = new Date(stateChangeDate).getTime();
+  return Number.isNaN(t) ? null : Math.max(0, Date.now() - t);
 }
 
 async function buildTimeInColumnElapsedMap({ org, project, adoPat, items }) {
@@ -634,45 +607,17 @@ async function buildTimeInColumnElapsedMap({ org, project, adoPat, items }) {
   return elapsedMap;
 }
 
-async function buildTimeInProgressElapsedMap({ org, project, adoPat, items, inProgressColumnName }) {
+function buildTimeInStateElapsedMap(items) {
   const elapsedMap = new Map();
-
-  if (!inProgressColumnName) {
-    // If no column name configured, return empty map
-    items.forEach(item => elapsedMap.set(item.id, null));
-    return elapsedMap;
-  }
-
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-
-    setRunState({
-      statusMessage: `Reading progress history ${index + 1}/${items.length}...`
-    });
-
-    try {
-      const elapsedMs = await getElapsedMsSinceEnteredInProgressColumn({
-        org,
-        project,
-        adoPat,
-        item,
-        inProgressColumnName
-      });
-
-      elapsedMap.set(item.id, elapsedMs);
-    } catch (error) {
-      console.warn(`Could not get time-in-progress for work item ${item.id}`, error);
-      elapsedMap.set(item.id, null);
-    }
-  }
-
+  items.forEach((item) => elapsedMap.set(item.id, getElapsedMsSinceStateChanged(item)));
   return elapsedMap;
 }
 
-function getSignalDefinitions(item, timeInColumnElapsedMap, timeInProgressElapsedMap) {
+function getSignalDefinitions(item, timeInColumnElapsedMap, timeInStateElapsedMap) {
   const lastUpdatedDurationMs = getElapsedMsSinceChanged(item);
   const timeInColumnDurationMs = timeInColumnElapsedMap.get(item.id);
-  const timeInProgressDurationMs = timeInProgressElapsedMap.get(item.id);
+  const timeInStateDurationMs = timeInStateElapsedMap.get(item.id);
+  const currentState = item.fields['System.State'] || null;
 
   return {
     lastUpdated: {
@@ -698,15 +643,15 @@ function getSignalDefinitions(item, timeInColumnElapsedMap, timeInProgressElapse
     },
     timeInProgress: {
       key: 'timeInProgress',
-      label: 'Time in progress',
-      durationMs: timeInProgressDurationMs,
-      rawValue: Number.isFinite(timeInProgressDurationMs)
-        ? formatDurationShort(timeInProgressDurationMs)
+      label: currentState ? `In '${currentState}'` : 'Time in state',
+      durationMs: timeInStateDurationMs,
+      rawValue: Number.isFinite(timeInStateDurationMs)
+        ? formatDurationShort(timeInStateDurationMs)
         : 'Unknown',
-      speechValue: Number.isFinite(timeInProgressDurationMs)
-        ? formatDurationForSpeech(timeInProgressDurationMs)
+      speechValue: Number.isFinite(timeInStateDurationMs)
+        ? formatDurationForSpeech(timeInStateDurationMs)
         : null,
-      isAvailable: Number.isFinite(timeInProgressDurationMs)
+      isAvailable: Number.isFinite(timeInStateDurationMs)
     }
   };
 }
@@ -1200,18 +1145,12 @@ async function loadChatterBoard({ tabId, url }) {
       items: filteredItems
     });
 
-    const timeInProgressElapsedMap = await buildTimeInProgressElapsedMap({
-      org: parsed.org,
-      project: parsed.project,
-      adoPat,
-      items: filteredItems,
-      inProgressColumnName: settings.inProgressColumnName
-    });
+    const timeInStateElapsedMap = buildTimeInStateElapsedMap(filteredItems);
 
     const entries = buildSignalEntries(
       filteredItems,
       timeInColumnElapsedMap,
-      timeInProgressElapsedMap,
+      timeInStateElapsedMap,
       scoringMode,
       absoluteScaleMaxDays
     );

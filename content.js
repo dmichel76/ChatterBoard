@@ -338,5 +338,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'GET_BOARD_COLUMN_NAMES') {
+    // Column names are on the aria-label of the header spans, in DOM order
+    const headerSpans = document.querySelectorAll('span[class*="kanban-board-column-header"][aria-label]');
+    const names = [...headerSpans].map((el) => el.getAttribute('aria-label')).filter(Boolean);
+    sendResponse({ ok: true, names });
+    return true;
+  }
+
   return false;
 });
