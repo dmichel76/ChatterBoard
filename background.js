@@ -143,6 +143,12 @@ async function speakWithElevenLabs(text, apiKey, voiceId) {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`ElevenLabs TTS API failed: HTTP ${response.status} ${response.statusText} — ${errorText}`);
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson?.detail?.code === 'payment_required') {
+          return 'payment_required';
+        }
+      } catch (_) { /* not JSON, ignore */ }
       return false;
     }
 
@@ -240,14 +246,15 @@ async function speak(text, ticketId) {
   if (settings.voiceEngine === 'ai' && settings.elevenLabsApiKey) {
     // If no manual voice override, pick a free premade voice based on ticket ID
     const voiceId = pickVoiceForTicket(ticketId);
-    const success = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId);
+    const elevenLabsResult = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId);
     
-    if (success) {
+    if (elevenLabsResult === true) {
       return;
     }
-    
-    // Log failure once per session and fall through to Chrome TTS
-    if (!speak.notifiedElevenLabsFailure) {
+
+    if (elevenLabsResult === 'payment_required') {
+      setRunState({ statusMessage: 'ElevenLabs: free plan cannot use library voices via the API. Falling back to Chrome TTS.' });
+    } else if (!speak.notifiedElevenLabsFailure) {
       console.warn('ElevenLabs TTS failed, falling back to Chrome TTS');
       speak.notifiedElevenLabsFailure = true;
     }
