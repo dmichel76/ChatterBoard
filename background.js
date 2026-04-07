@@ -885,6 +885,12 @@ async function generateSpeechTextWithOpenAI(entry, apiKey) {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`OpenAI API error: HTTP ${response.status} — ${errorText}`);
+      try {
+        const errorJson = JSON.parse(errorText);
+        const code = errorJson?.error?.code;
+        if (code === 'insufficient_quota') return { error: 'insufficient_quota' };
+        if (code === 'invalid_api_key') return { error: 'invalid_api_key' };
+      } catch (_) { /* not JSON, ignore */ }
       return null;
     }
 
@@ -1166,7 +1172,15 @@ async function loadChatterBoard({ tabId, url }) {
       const generated = await Promise.all(
         selected.map((entry) => generateSpeechTextWithOpenAI(entry, settings.openAiApiKey))
       );
-      generated.forEach((text, i) => {
+      const openAiError = generated.find((r) => r && typeof r === 'object' && r.error);
+      if (openAiError) {
+        const msg = openAiError.error === 'insufficient_quota'
+          ? 'OpenAI: quota exceeded — check your billing at platform.openai.com. Falling back to template speech.'
+          : 'OpenAI: invalid API key — check your key in Options. Falling back to template speech.';
+        setRunState({ statusMessage: msg });
+      }
+      generated.forEach((result, i) => {
+        const text = typeof result === 'string' ? result : null;
         if (text) {
           selected[i].speechText = text;
         }
