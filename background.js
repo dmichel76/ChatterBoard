@@ -48,6 +48,8 @@ function broadcastState() {
 async function getRuntimeSettings() {
   const stored = await chrome.storage.sync.get([
     'adoPat',
+    'elevenLabsApiKey',
+    'elevenLabsVoiceId',
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
@@ -73,11 +75,16 @@ async function getRuntimeSettings() {
   );
 
   const adoPat = (stored.adoPat || '').trim();
+  // Strip any non-ASCII characters that would break HTTP headers
+  const elevenLabsApiKey = (stored.elevenLabsApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
+  const elevenLabsVoiceId = (stored.elevenLabsVoiceId || '').trim().replace(/[^\x20-\x7E]/g, '');
   const tagsToIgnore = (stored.tagsToIgnore || '').trim();
   const inProgressColumnName = (stored.inProgressColumnName || '').trim();
 
   return {
     adoPat,
+    elevenLabsApiKey,
+    elevenLabsVoiceId,
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,
@@ -96,8 +103,88 @@ function clampNumber(value, min, max, fallback) {
   return Math.max(min, Math.min(max, Math.round(parsed)));
 }
 
-function speak(text) {
-  return new Promise((resolve, reject) => {
+async function speakWithElevenLabs(text, apiKey, voiceId) {
+  // George (JBFqnCBsd6RMkjVDRZzb) is a free-tier compatible premade voice
+  const resolvedVoiceId = voiceId || 'JBFqnCBsd6RMkjVDRZzb';
+  console.log('ElevenLabs: Attempting TTS with API key:', apiKey ? `${apiKey.substring(0, 8)}...` : 'NONE', '| Voice:', resolvedVoiceId);
+
+  try {
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'audio/mpeg',
+        'Content-Type': 'application/json',
+        'xi-api-key': apiKey
+      },
+      body: JSON.stringify({
+        text: text,
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.5
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`ElevenLabs TTS API failed: HTTP ${response.status} ${response.statusText} — ${errorText}`);
+      return false;
+    }
+
+    console.log('ElevenLabs: Audio received, sending to offscreen for playback...');
+    const arrayBuffer = await response.arrayBuffer();
+    const base64Audio = arrayBufferToBase64(arrayBuffer);
+
+    return await playAudioViaOffscreen(base64Audio);
+  } catch (error) {
+    console.error('ElevenLabs TTS error:', error);
+    return false;
+  }
+}
+
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+async function playAudioViaOffscreen(base64Audio) {
+  // Ensure the offscreen document exists
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT']
+  });
+
+  if (!existingContexts.length) {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['AUDIO_PLAYBACK'],
+      justification: 'Playing ElevenLabs TTS audio'
+    });
+  }
+
+  return new Promise((resolve) => {
+    const listener = (message) => {
+      if (message.type === 'ELEVENLABS_PLAYBACK_DONE') {
+        chrome.runtime.onMessage.removeListener(listener);
+        console.log('ElevenLabs: Playback completed successfully:', message.success);
+        resolve(message.success);
+      }
+    };
+    chrome.runtime.onMessage.addListener(listener);
+
+    chrome.runtime.sendMessage({
+      type: 'PLAY_ELEVENLABS_AUDIO',
+      base64Audio
+    });
+  });
+}
+
+function speakWithChromeTTS(text) {
+  return new Promise((resolve) => {
     chrome.tts.stop();
 
     chrome.tts.speak(text, {
@@ -116,11 +203,37 @@ function speak(text) {
         }
 
         if (event.type === 'error') {
-          reject(new Error(`TTS failed: ${event.type}`));
+          console.warn('Chrome TTS error:', event);
+          resolve();
         }
       }
     });
   });
+}
+
+async function speak(text) {
+  const settings = await getRuntimeSettings();
+  
+  console.log('Speak called with ElevenLabs API key:', settings.elevenLabsApiKey ? 'Present' : 'Not set');
+  
+  // Try ElevenLabs first if API key is available
+  if (settings.elevenLabsApiKey) {
+    const success = await speakWithElevenLabs(text, settings.elevenLabsApiKey, settings.elevenLabsVoiceId);
+    
+    if (success) {
+      return;
+    }
+    
+    // Log failure once per session and fall through to Chrome TTS
+    if (!speak.notifiedElevenLabsFailure) {
+      console.warn('ElevenLabs TTS failed, falling back to Chrome TTS');
+      speak.notifiedElevenLabsFailure = true;
+    }
+  }
+  
+  console.log('Using Chrome TTS fallback');
+  // Fallback to Chrome TTS
+  await speakWithChromeTTS(text);
 }
 
 function parseAdoUrl(url) {
@@ -663,6 +776,8 @@ async function loadSentencesForSignal(signalKey) {
     // Fallback to hardcoded sentences
     if (signalKey === 'timeInColumn') {
       return ['I have been stuck in this column for {duration}.'];
+    } else if (signalKey === 'timeInProgress') {
+      return ['I have been in progress for {duration}.'];
     }
     return ['Nobody has touched me for {duration}.'];
   }
@@ -704,6 +819,7 @@ function getRandomSentenceForTone(sentences, tone) {
 }
 
 async function buildVoiceSentenceFromSignal(signal, frustrationScore) {
+  // Use predefined sentences
   const sentences = await loadSentencesForSignal(signal.key);
   const tone = getToneCategory(frustrationScore);
   const template = getRandomSentenceForTone(sentences, tone);

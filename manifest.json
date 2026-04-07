@@ -3,7 +3,7 @@
   "name": "ChatterBoard MVP",
   "version": "0.1.0",
   "description": "Gives Azure DevOps tickets a voice.",
-  "permissions": ["storage", "activeTab", "scripting", "tts"],
+  "permissions": ["storage", "activeTab", "scripting", "tts", "offscreen"],
   "host_permissions": [
     "https://dev.azure.com/*",
     "https://*.visualstudio.com/*",
