@@ -4,6 +4,8 @@ ChatterBoard is a Chrome extension that gives Azure DevOps tickets a voice.
 
 It identifies tickets that may need attention, brings them into view on the board, highlights them, and reads them out loud — useful during board reviews or stand-up.
 
+![ChatterBoard popup showing a ticket with frustration score 92](docs/screenshot.png)
+
 ---
 
 ## What it does
