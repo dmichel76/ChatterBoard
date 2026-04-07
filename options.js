@@ -1,5 +1,8 @@
 const DEFAULT_SETTINGS = {
   adoPat: '',
+  voiceEngine: 'tts',
+  elevenLabsApiKey: '',
+  elevenLabsVoiceId: '',
   scoringMode: 'relative',
   absoluteScaleMaxDays: 30,
   maxTicketsToSpeak: 5,
@@ -9,6 +12,9 @@ const DEFAULT_SETTINGS = {
 
 const fields = {
   adoPat: document.getElementById('adoPat'),
+  voiceEngine: document.getElementById('voiceEngine'),
+  elevenLabsApiKey: document.getElementById('elevenLabsApiKey'),
+  elevenLabsVoiceId: document.getElementById('elevenLabsVoiceId'),
   scoringMode: document.getElementById('scoringMode'),
   absoluteScaleMaxDays: document.getElementById('absoluteScaleMaxDays'),
   maxTicketsToSpeak: document.getElementById('maxTicketsToSpeak'),
@@ -39,6 +45,9 @@ function normaliseScoringMode(value) {
 async function loadOptions() {
   const stored = await chrome.storage.sync.get([
     'adoPat',
+    'voiceEngine',
+    'elevenLabsApiKey',
+    'elevenLabsVoiceId',
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
@@ -47,6 +56,9 @@ async function loadOptions() {
   ]);
 
   fields.adoPat.value = stored.adoPat || DEFAULT_SETTINGS.adoPat;
+  fields.voiceEngine.value = stored.voiceEngine === 'ai' ? 'ai' : 'tts';
+  fields.elevenLabsApiKey.value = stored.elevenLabsApiKey || DEFAULT_SETTINGS.elevenLabsApiKey;
+  fields.elevenLabsVoiceId.value = stored.elevenLabsVoiceId || DEFAULT_SETTINGS.elevenLabsVoiceId;
   fields.scoringMode.value = normaliseScoringMode(stored.scoringMode);
   fields.absoluteScaleMaxDays.value = clampNumber(
     stored.absoluteScaleMaxDays,
@@ -66,6 +78,10 @@ async function loadOptions() {
 
 async function saveOptions() {
   const adoPat = fields.adoPat.value.trim();
+  const voiceEngine = fields.voiceEngine.value === 'ai' ? 'ai' : 'tts';
+  // Strip any non-ASCII characters that would break HTTP headers
+  const elevenLabsApiKey = fields.elevenLabsApiKey.value.trim().replace(/[^\x20-\x7E]/g, '');
+  const elevenLabsVoiceId = fields.elevenLabsVoiceId.value.trim().replace(/[^\x20-\x7E]/g, '');
   const scoringMode = normaliseScoringMode(fields.scoringMode.value);
   const absoluteScaleMaxDays = clampNumber(
     fields.absoluteScaleMaxDays.value,
@@ -87,9 +103,14 @@ async function saveOptions() {
   fields.maxTicketsToSpeak.value = String(maxTicketsToSpeak);
   fields.tagsToIgnore.value = tagsToIgnore;
   fields.inProgressColumnName.value = inProgressColumnName;
+  fields.elevenLabsApiKey.value = elevenLabsApiKey;
+  fields.elevenLabsVoiceId.value = elevenLabsVoiceId;
 
   await chrome.storage.sync.set({
     adoPat,
+    voiceEngine,
+    elevenLabsApiKey,
+    elevenLabsVoiceId,
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,

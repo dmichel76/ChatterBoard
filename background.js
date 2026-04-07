@@ -67,6 +67,7 @@ function broadcastState() {
 async function getRuntimeSettings() {
   const stored = await chrome.storage.sync.get([
     'adoPat',
+    'voiceEngine',
     'elevenLabsApiKey',
     'elevenLabsVoiceId',
     'scoringMode',
@@ -94,6 +95,7 @@ async function getRuntimeSettings() {
   );
 
   const adoPat = (stored.adoPat || '').trim();
+  const voiceEngine = stored.voiceEngine === 'ai' ? 'ai' : 'tts';
   // Strip any non-ASCII characters that would break HTTP headers
   const elevenLabsApiKey = (stored.elevenLabsApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
   const elevenLabsVoiceId = (stored.elevenLabsVoiceId || '').trim().replace(/[^\x20-\x7E]/g, '');
@@ -102,6 +104,7 @@ async function getRuntimeSettings() {
 
   return {
     adoPat,
+    voiceEngine,
     elevenLabsApiKey,
     elevenLabsVoiceId,
     scoringMode,
@@ -243,8 +246,8 @@ async function speak(text, ticketId) {
   
   console.log('Speak called with ElevenLabs API key:', settings.elevenLabsApiKey ? 'Present' : 'Not set');
   
-  // Try ElevenLabs first if API key is available
-  if (settings.elevenLabsApiKey) {
+  // Try ElevenLabs if AI voice engine is selected and an API key is available
+  if (settings.voiceEngine === 'ai' && settings.elevenLabsApiKey) {
     // If no manual voice override, pick a free premade voice based on ticket ID
     const voiceId = settings.elevenLabsVoiceId || pickVoiceForTicket(ticketId);
     const success = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId);

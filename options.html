@@ -61,6 +61,23 @@
   <div class="hint">Minimum scope for MVP: Work Items (Read).</div>
 
   <div class="section">
+    <label for="voiceEngine">Voice engine</label>
+    <select id="voiceEngine">
+      <option value="tts">Chrome built-in TTS</option>
+      <option value="ai">ElevenLabs AI voices</option>
+    </select>
+    <div class="hint">Switch to ElevenLabs for realistic AI voices. Requires an API key below.</div>
+
+    <label for="elevenLabsApiKey">ElevenLabs API Key</label>
+    <input id="elevenLabsApiKey" type="password" placeholder="API Key for high-quality AI voice" />
+    <div class="hint">Get your API key at elevenlabs.io</div>
+
+    <label for="elevenLabsVoiceId">ElevenLabs Voice ID (optional)</label>
+    <input id="elevenLabsVoiceId" type="text" placeholder="e.g. JBFqnCBsd6RMkjVDRZzb" />
+    <div class="hint">Pin a specific voice. Find IDs at elevenlabs.io → Voices → click a voice → copy the ID from the URL. Leave blank to use a different free voice per ticket automatically.</div>
+  </div>
+
+  <div class="section">
     <label for="scoringMode">Time-based scoring mode</label>
     <select id="scoringMode">
       <option value="relative">Relative, based on the worst active visible ticket on the board</option>

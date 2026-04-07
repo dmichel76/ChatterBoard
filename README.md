@@ -1,99 +1,56 @@
-# ChatterBoard MVP
+# ChatterBoard
 
-ChatterBoard is a Chrome extension prototype that gives Azure DevOps tickets a voice.
+ChatterBoard is a Chrome extension that gives Azure DevOps tickets a voice.
 
-The idea is simple: identify tickets that may need attention, bring them into view on the board, highlight them, and read them out loud so teams notice them during board reviews or stand-up.
-
-This is an early MVP, built to validate the core interaction rather than provide a polished product.
+It identifies tickets that may need attention, brings them into view on the board, highlights them, and reads them out loud — useful during board reviews or stand-up.
 
 ---
 
-## What it does today
+## What it does
 
-The current prototype can:
+- Loads as a Chrome extension on any Azure DevOps board page
+- Queries the Azure DevOps REST API for work items in the current project
+- Limits analysis to tickets currently visible on the board
+- Excludes tickets in the first and last board columns
+- Scores each ticket using up to three frustration signals
+- Sorts tickets by frustration score and queues them for playback
+- Scrolls each ticket into view and highlights the card
+- Reads the ticket aloud using either Chrome TTS or ElevenLabs AI voices
 
-- load as a Chrome extension
-- run on Azure DevOps board pages
-- store an Azure DevOps PAT in the extension options
-- call the Azure DevOps REST API
-- retrieve work items from the current project
-- limit analysis to tickets currently visible on the board
-- exclude tickets in the first and last board columns
-- score tickets using a simple rule based on age since last update
-- pick a small number of candidate tickets
-- scroll each ticket into view
-- highlight the matching card on the board
-- read the ticket out loud using Chrome TTS
+---
 
-At the moment, the spoken message includes:
-- ticket ID
-- days since last update
-- ticket title
+## Frustration signals
+
+Each ticket is scored on up to three signals. Signals scoring below 50% of the strongest signal are silenced — so if one signal clearly dominates, the others are not mentioned.
+
+| Signal | What it measures |
+|---|---|
+| **Time since last updated** | How long since any change was made to the ticket |
+| **Time in column** | How long the ticket has been in its current board column |
+| **Time in progress** | How long since the ticket entered the configured in-progress column |
+
+Scoring can be **relative** (compared against the worst ticket currently on the board) or **absolute** (compared against a fixed number of days).
+
+---
+
+## Voice options
+
+ChatterBoard supports two voice engines, switchable from the Options page:
+
+- **Chrome built-in TTS** — works out of the box, no configuration needed
+- **ElevenLabs AI voices** — realistic AI voices using the ElevenLabs API. When no specific Voice ID is set, each ticket is automatically assigned a different free-tier voice based on its ticket ID, so the board feels varied. You can pin a single voice by entering a Voice ID.
+
+---
+
+## spoken output
+
+For each ticket, ChatterBoard speaks:
+- The ticket title
+- One sentence per strong frustration signal, with phrasing that varies based on the severity (tone-matched from a curated sentence list)
 
 Example:
 
-> Ticket 1106429. No update for 4 days. Android - Unable to focus/select the save icon when using TalkBack.
-
----
-
-## Current MVP behaviour
-
-When the user clicks **Play**:
-
-1. ChatterBoard reads the current Azure DevOps page context
-2. It queries Azure DevOps for work items in the current project
-3. It keeps only items that are visible on the current board
-4. It excludes tickets in the first and last visible columns
-5. It selects the oldest candidates based on last update date
-6. It scrolls each selected ticket into view
-7. It highlights the card
-8. It speaks the ticket details
-
----
-
-## What it does not do yet
-
-This is still an MVP scaffold, so several important parts are not implemented yet.
-
-Not done yet:
-
-- blocked ticket detection
-- effort-based scoring
-- age since creation
-- age in current state
-- age in current column
-- bounce / backflow detection
-- dynamic phrase generation
-- ElevenLabs voice output
-- configuration of thresholds
-- pricing, trial, or licensing logic
-- Jira support
-
----
-
-## Tech approach
-
-Current implementation:
-
-- **Chrome extension**
-- **Azure DevOps REST API**
-- **Chrome TTS**
-- **Content script** for DOM interaction
-- **Background script** for API calls and orchestration
-
-### Current split of responsibilities
-
-- `popup.js`  
-  Starts the flow when the user clicks Play
-
-- `background.js`  
-  Reads settings, calls Azure DevOps, scores tickets, sequences speech/highlighting
-
-- `content.js`  
-  Finds cards in the DOM, checks visible tickets, checks column position, scrolls, highlights
-
-- `options.js`  
-  Stores and retrieves the Azure DevOps PAT
+> Android - Unable to focus the save icon when using TalkBack. This one has been gathering dust for 3 weeks and nobody's touched it.
 
 ---
 
@@ -101,73 +58,49 @@ Current implementation:
 
 ### 1. Load the extension
 
-1. Open Chrome
-2. Go to `chrome://extensions`
-3. Turn on **Developer mode**
-4. Click **Load unpacked**
-5. Select the extension folder
+1. Open Chrome and go to `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked** and select this folder
 
-### 2. Configure Azure DevOps access
+### 2. Configure
 
-Open the extension **Options** page and enter:
+Open the extension **Options** page and set:
 
-- **Azure DevOps PAT**
-
-Minimum required scope:
-
-- **Work Items (Read)**
+| Setting | Required | Description |
+|---|---|---|
+| Azure DevOps PAT | Yes | Minimum scope: Work Items (Read) |
+| Voice engine | — | Chrome TTS (default) or ElevenLabs |
+| ElevenLabs API Key | If using AI voices | From elevenlabs.io |
+| ElevenLabs Voice ID | No | Leave blank to assign voices automatically |
+| Scoring mode | — | Relative or Absolute |
+| Absolute scale max days | If absolute mode | Days that map to a score of 100 (default: 30) |
+| Maximum tickets spoken | — | How many tickets to queue per run (default: 5) |
+| Tags to ignore | No | Comma-separated tags — matching tickets are skipped |
+| In-progress column name | No | Column name used for the time-in-progress signal |
 
 ### 3. Use it
 
 1. Open an Azure DevOps board page
-2. Click the extension
-3. Press **Play**
+2. Click the ChatterBoard extension icon
+3. Press **Play** to load and speak the queue
+4. Use **Next** / **Prev** to navigate manually
+5. Press **Clear** to reset
 
 ---
 
-## Current limitations
+## File structure
 
-A few things are intentionally rough at this stage:
-
-- board detection is based on the current Azure DevOps page structure
-- DOM selectors are tailored to the current observed board HTML
-- board column logic is hardcoded to ignore first and last visible columns
-- scoring is still very basic
-- only a small number of tickets are read out for debugging and iteration
-- the extension currently uses Chrome TTS rather than ElevenLabs
-
----
-
-## Why this exists
-
-The goal is to test whether a board can become more actionable if work items speak for themselves.
-
-Rather than relying only on dashboards, reports, or people noticing stale cards manually, ChatterBoard tries to create a lightweight behavioural nudge directly inside the board.
-
----
-
-## Next planned steps
-
-Likely next improvements:
-
-- improve scoring beyond last update date
-- add blocked ticket detection
-- add more nuanced phrasing
-- make ticket selection more flow-aware
-- improve board matching robustness
-- optionally switch from Chrome TTS to ElevenLabs
-- add basic configuration for thresholds
+| File | Purpose |
+|---|---|
+| `background.js` | API calls, scoring, speech orchestration |
+| `content.js` | DOM interaction — finds cards, scrolls, highlights |
+| `popup.js` / `popup.html` | Extension popup UI |
+| `options.js` / `options.html` | Settings page |
+| `offscreen.js` / `offscreen.html` | Audio playback context for ElevenLabs (required by Chrome MV3) |
+| `sentences/` | Tone-matched sentence templates for each frustration signal |
 
 ---
 
 ## Status
 
-Working prototype.
-
-Core loop is now functional:
-- retrieve tickets
-- filter to visible board items
-- exclude first/last column
-- scroll
-- highlight
-- speak
+Working prototype. Core loop is functional end-to-end.
