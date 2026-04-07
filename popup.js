@@ -350,37 +350,41 @@ const pillAiText = document.getElementById('pillAiText');
 const pillChromeTts = document.getElementById('pillChromeTts');
 const pillAiVoice = document.getElementById('pillAiVoice');
 
-function applySpeechMode(isAiSpeech) {
-  pillAiText.className = `mode-pill ${isAiSpeech ? 'active' : 'inactive'}`;
-  pillTemplates.className = `mode-pill ${isAiSpeech ? 'inactive' : 'active'}`;
+function applySpeechMode(isAiSpeech, hasOpenAiKey) {
+  pillAiText.className = `mode-pill ${!hasOpenAiKey ? 'disabled' : isAiSpeech ? 'active' : 'inactive'}`;
+  pillTemplates.className = `mode-pill ${isAiSpeech && hasOpenAiKey ? 'inactive' : 'active'}`;
 }
 
-function applyVoiceMode(isAiVoice) {
-  pillAiVoice.className = `mode-pill ${isAiVoice ? 'active' : 'inactive'}`;
-  pillChromeTts.className = `mode-pill ${isAiVoice ? 'inactive' : 'active'}`;
+function applyVoiceMode(isAiVoice, hasElevenLabsKey) {
+  pillAiVoice.className = `mode-pill ${!hasElevenLabsKey ? 'disabled' : isAiVoice ? 'active' : 'inactive'}`;
+  pillChromeTts.className = `mode-pill ${isAiVoice && hasElevenLabsKey ? 'inactive' : 'active'}`;
 }
 
-chrome.storage.sync.get(['speechMode', 'voiceEngine'], (stored) => {
-  applySpeechMode(stored.speechMode === 'ai');
-  applyVoiceMode(stored.voiceEngine === 'ai');
+chrome.storage.sync.get(['speechMode', 'voiceEngine', 'openAiApiKey', 'elevenLabsApiKey'], (stored) => {
+  const hasOpenAiKey = !!(stored.openAiApiKey || '').trim();
+  const hasElevenLabsKey = !!(stored.elevenLabsApiKey || '').trim();
+  applySpeechMode(stored.speechMode === 'ai', hasOpenAiKey);
+  applyVoiceMode(stored.voiceEngine === 'ai', hasElevenLabsKey);
 });
 
 pillTemplates.addEventListener('click', () => {
   chrome.storage.sync.set({ speechMode: 'templates' });
-  applySpeechMode(false);
+  chrome.storage.sync.get(['openAiApiKey'], (s) => applySpeechMode(false, !!(s.openAiApiKey || '').trim()));
 });
 
 pillAiText.addEventListener('click', () => {
+  if (pillAiText.classList.contains('disabled')) return;
   chrome.storage.sync.set({ speechMode: 'ai' });
-  applySpeechMode(true);
+  chrome.storage.sync.get(['openAiApiKey'], (s) => applySpeechMode(true, !!(s.openAiApiKey || '').trim()));
 });
 
 pillChromeTts.addEventListener('click', () => {
   chrome.storage.sync.set({ voiceEngine: 'tts' });
-  applyVoiceMode(false);
+  chrome.storage.sync.get(['elevenLabsApiKey'], (s) => applyVoiceMode(false, !!(s.elevenLabsApiKey || '').trim()));
 });
 
 pillAiVoice.addEventListener('click', () => {
+  if (pillAiVoice.classList.contains('disabled')) return;
   chrome.storage.sync.set({ voiceEngine: 'ai' });
-  applyVoiceMode(true);
+  chrome.storage.sync.get(['elevenLabsApiKey'], (s) => applyVoiceMode(true, !!(s.elevenLabsApiKey || '').trim()));
 });

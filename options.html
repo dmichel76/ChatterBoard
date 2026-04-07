@@ -64,16 +64,16 @@
   <div class="hint">Minimum scope for MVP: Work Items (Read).</div>
 
   <div class="section">
-    <label for="openAiApiKey">OpenAI API Key (optional)</label>
-    <input id="openAiApiKey" type="password" placeholder="sk-..." />
-    <div class="hint">Required for AI-generated speech. Get your key at platform.openai.com</div>
-
     <label for="speechMode">Speech text mode</label>
     <select id="speechMode">
       <option value="templates">Predefined sentence templates</option>
       <option value="ai">AI-generated (OpenAI GPT-4o-mini)</option>
     </select>
-    <div class="hint">Templates use curated tone-matched sentences. AI-generated produces a unique narration per ticket using OpenAI. Requires an API key above.</div>
+    <div class="hint">Templates use curated tone-matched sentences. AI-generated produces a unique narration per ticket using OpenAI. Requires an API key below.</div>
+
+    <label for="openAiApiKey">OpenAI API Key</label>
+    <input id="openAiApiKey" type="password" placeholder="sk-..." />
+    <div class="hint">Required for AI-generated speech. Get your key at platform.openai.com</div>
   </div>
 
   <div class="section">
@@ -86,11 +86,7 @@
 
     <label for="elevenLabsApiKey">ElevenLabs API Key</label>
     <input id="elevenLabsApiKey" type="password" placeholder="API Key for high-quality AI voice" />
-    <div class="hint">Get your API key at elevenlabs.io</div>
-
-    <label for="elevenLabsVoiceId">ElevenLabs Voice ID (optional)</label>
-    <input id="elevenLabsVoiceId" type="text" placeholder="e.g. JBFqnCBsd6RMkjVDRZzb" />
-    <div class="hint">Pin a specific voice. Find IDs at elevenlabs.io → Voices → click a voice → copy the ID from the URL. Leave blank to use a different free voice per ticket automatically.</div>
+    <div class="hint">Get your API key at elevenlabs.io. A different free voice is automatically assigned per ticket.</div>
   </div>
 
   <div class="section">
