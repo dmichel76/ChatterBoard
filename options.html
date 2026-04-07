@@ -56,9 +56,25 @@
 <body>
   <h1>ChatterBoard Options</h1>
 
+  <button id="saveButton">Save</button>
+  <div id="status" class="status"></div>
+
   <label for="adoPat">Azure DevOps PAT</label>
   <input id="adoPat" type="password" placeholder="Personal Access Token" />
   <div class="hint">Minimum scope for MVP: Work Items (Read).</div>
+
+  <div class="section">
+    <label for="openAiApiKey">OpenAI API Key (optional)</label>
+    <input id="openAiApiKey" type="password" placeholder="sk-..." />
+    <div class="hint">Required for AI-generated speech. Get your key at platform.openai.com</div>
+
+    <label for="speechMode">Speech text mode</label>
+    <select id="speechMode">
+      <option value="templates">Predefined sentence templates</option>
+      <option value="ai">AI-generated (OpenAI GPT-4o-mini)</option>
+    </select>
+    <div class="hint">Templates use curated tone-matched sentences. AI-generated produces a unique narration per ticket using OpenAI. Requires an API key above.</div>
+  </div>
 
   <div class="section">
     <label for="voiceEngine">Voice engine</label>
@@ -111,9 +127,6 @@
       The name of the column that marks work as "in progress". Used to track time in progress signal. Leave blank to disable this signal.
     </div>
   </div>
-
-  <button id="saveButton">Save</button>
-  <div id="status" class="status"></div>
 
   <script type="module" src="options.js"></script>
 </body>

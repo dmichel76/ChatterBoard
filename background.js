@@ -70,6 +70,8 @@ async function getRuntimeSettings() {
     'voiceEngine',
     'elevenLabsApiKey',
     'elevenLabsVoiceId',
+    'openAiApiKey',
+    'speechMode',
     'scoringMode',
     'absoluteScaleMaxDays',
     'maxTicketsToSpeak',
@@ -99,6 +101,8 @@ async function getRuntimeSettings() {
   // Strip any non-ASCII characters that would break HTTP headers
   const elevenLabsApiKey = (stored.elevenLabsApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
   const elevenLabsVoiceId = (stored.elevenLabsVoiceId || '').trim().replace(/[^\x20-\x7E]/g, '');
+  const openAiApiKey = (stored.openAiApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
+  const speechMode = stored.speechMode === 'ai' ? 'ai' : 'templates';
   const tagsToIgnore = (stored.tagsToIgnore || '').trim();
   const inProgressColumnName = (stored.inProgressColumnName || '').trim();
 
@@ -107,6 +111,8 @@ async function getRuntimeSettings() {
     voiceEngine,
     elevenLabsApiKey,
     elevenLabsVoiceId,
+    openAiApiKey,
+    speechMode,
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,
@@ -886,6 +892,65 @@ async function buildSpeechFromSignals(signals, title, frustrationScore) {
   return [title, ...complaintSentences].join(' ');
 }
 
+function buildOpenAIPrompt(entry) {
+  const title = entry.item.fields['System.Title'] || 'Untitled work item';
+  const signals = getAvailableSignalsSorted(entry);
+  const score = entry.frustrationScore;
+
+  const toneMap = {
+    low: 'mild and low-key',
+    medium: 'concerned and direct',
+    high: 'urgent and exasperated',
+    critical: 'blunt and alarmed'
+  };
+  const tone = toneMap[getToneCategory(score)] || 'direct';
+
+  const signalLines = signals
+    .map((s) => `- ${s.label}: ${s.rawValue} (frustration score: ${s.score}/100)`)
+    .join('\n');
+
+  return `You are announcing a stale ticket during a team stand-up. Be concise, ${tone}, and speak naturally. Do not say "ticket", do not mention IDs or scores. Speak in 1–2 sentences maximum.
+
+Ticket title: "${title}"
+Frustration signals:
+${signalLines}
+
+Announce this ticket.`;
+}
+
+async function generateSpeechTextWithOpenAI(entry, apiKey) {
+  try {
+    const prompt = buildOpenAIPrompt(entry);
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 120,
+        temperature: 0.8
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`OpenAI API error: HTTP ${response.status} — ${errorText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim();
+    return text || null;
+  } catch (error) {
+    console.error('OpenAI speech generation failed:', error);
+    return null;
+  }
+}
+
 function sortEntriesForPlayback(entries) {
   return [...entries].sort((a, b) => {
     if (b.frustrationScore !== a.frustrationScore) {
@@ -971,7 +1036,8 @@ async function navigateToTicket(index) {
     console.warn('Highlight failed', id, error);
   }
 
-  const speechText = await buildSpeechFromSignals(voiceSignals, title, entry.frustrationScore);
+  const speechText = entry.speechText
+    || await buildSpeechFromSignals(voiceSignals, title, entry.frustrationScore);
   await speak(speechText, id);
 }
 
@@ -1150,6 +1216,19 @@ async function loadChatterBoard({ tabId, url }) {
         statusMessage: 'No active visible work items found.'
       });
       return { ok: true, count: 0 };
+    }
+
+    // Pre-generate AI speech text for all queued tickets in parallel
+    if (settings.speechMode === 'ai' && settings.openAiApiKey) {
+      setRunState({ statusMessage: 'Generating speech...' });
+      const generated = await Promise.all(
+        selected.map((entry) => generateSpeechTextWithOpenAI(entry, settings.openAiApiKey))
+      );
+      generated.forEach((text, i) => {
+        if (text) {
+          selected[i].speechText = text;
+        }
+      });
     }
 
     setRunState({
