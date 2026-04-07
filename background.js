@@ -767,7 +767,7 @@ function buildSignalEntries(items, timeInColumnElapsedMap, timeInProgressElapsed
 }
 
 function getAvailableSignalsSorted(entry) {
-  return Object.values(entry.signals)
+  const sorted = Object.values(entry.signals)
     .filter((signal) => signal.isAvailable && Number.isFinite(signal.score))
     .sort((a, b) => {
       const scoreDiff = (b.score || 0) - (a.score || 0);
@@ -782,6 +782,15 @@ function getAvailableSignalsSorted(entry) {
 
       return 0;
     });
+
+  if (sorted.length === 0) {
+    return sorted;
+  }
+
+  // Only speak signals that are at least 50% of the top signal's score.
+  // This filters out weak signals when a much stronger one dominates.
+  const topScore = sorted[0].score;
+  return sorted.filter((signal) => signal.score >= topScore * 0.5);
 }
 
 function getPrimarySignal(entry) {
