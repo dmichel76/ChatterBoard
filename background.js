@@ -620,8 +620,21 @@ async function getElapsedMsSinceEnteredCurrentColumn({ org, project, adoPat, ite
   for (let i = revisions.length - 1; i >= 0; i -= 1) {
     const revisionColumn = getBoardColumnFromFields(revisions[i].fields);
 
+    // Skip revisions where BoardColumn is not set — treat as unknown, not "different column"
+    if (revisionColumn === null) {
+      continue;
+    }
+
     if (revisionColumn !== currentColumn) {
-      const entryRevision = revisions[i + 1];
+      // Found the revision before the ticket entered currentColumn.
+      // Scan forward to find the first revision that actually has currentColumn set.
+      let entryRevision = null;
+      for (let j = i + 1; j < revisions.length; j++) {
+        if (getBoardColumnFromFields(revisions[j].fields) !== null) {
+          entryRevision = revisions[j];
+          break;
+        }
+      }
       const entryTime = getChangedTimeFromFields(entryRevision?.fields);
       if (entryTime == null) {
         return null;
