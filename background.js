@@ -304,21 +304,37 @@ async function speak(text, ticketId) {
 
   // Try ElevenLabs if AI voice engine is selected and an API key is available
   if (settings.voiceEngine === 'ai' && settings.elevenLabsApiKey) {
-    // If no manual voice override, pick a free premade voice based on ticket ID
-    const voiceId = pickVoiceForTicket(ticketId);
-    const elevenLabsResult = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId, ticketId);
-    
-    if (elevenLabsResult === true) {
-      return;
-    }
+    const numericId = parseInt(ticketId, 10);
+    const startIndex = Number.isFinite(numericId)
+      ? numericId % FREE_ELEVENLABS_VOICES.length
+      : Math.floor(Math.random() * FREE_ELEVENLABS_VOICES.length);
 
-    if (elevenLabsResult === 'payment_required') {
-      setRunState({ statusMessage: 'ElevenLabs: free plan cannot use library voices via the API. Falling back to Chrome TTS.' });
-    } else if (elevenLabsResult === 'voice_not_found') {
-      setRunState({ statusMessage: 'ElevenLabs: voice ID not found — it may have been removed. Falling back to Chrome TTS.' });
-    } else if (!speak.notifiedElevenLabsFailure) {
-      console.warn('ElevenLabs TTS failed, falling back to Chrome TTS');
-      speak.notifiedElevenLabsFailure = true;
+    for (let attempt = 0; attempt < FREE_ELEVENLABS_VOICES.length; attempt++) {
+      const voiceIndex = (startIndex + attempt) % FREE_ELEVENLABS_VOICES.length;
+      const voiceId = FREE_ELEVENLABS_VOICES[voiceIndex];
+      // Only use the pre-fetch cache on the first attempt
+      const cacheId = attempt === 0 ? ticketId : null;
+      const elevenLabsResult = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId, cacheId);
+
+      if (elevenLabsResult === true) {
+        return;
+      }
+
+      if (elevenLabsResult === 'voice_not_found') {
+        console.warn(`ElevenLabs: voice ${voiceId} not found, trying next voice...`);
+        continue;
+      }
+
+      if (elevenLabsResult === 'payment_required') {
+        setRunState({ statusMessage: 'ElevenLabs: free plan cannot use library voices via the API. Falling back to Chrome TTS.' });
+        break;
+      }
+
+      if (!speak.notifiedElevenLabsFailure) {
+        console.warn('ElevenLabs TTS failed, falling back to Chrome TTS');
+        speak.notifiedElevenLabsFailure = true;
+      }
+      break;
     }
   }
   
