@@ -118,6 +118,23 @@
     </div>
   </div>
 
+  <div class="section">
+    <h2 style="margin:0 0 8px; font-size:16px;">Ticket filters</h2>
+    <div class="hint" style="margin-top:0">Tickets matching any of these filters will be excluded from the queue.</div>
+
+    <label for="statesToIgnore">States to ignore</label>
+    <input id="statesToIgnore" type="text" placeholder="Resolved, Closed, Done" />
+    <div class="hint">
+      Comma-separated work item states to skip. Case-insensitive. Example: <em>Resolved, Closed</em>
+    </div>
+
+    <label for="typesToIgnore">Work item types to ignore</label>
+    <input id="typesToIgnore" type="text" placeholder="Epic, Test Case" />
+    <div class="hint">
+      Comma-separated work item types to skip. Case-insensitive. Example: <em>Epic, Test Case, Impediment</em>
+    </div>
+  </div>
+
   <script type="module" src="options.js"></script>
 </body>
 </html>

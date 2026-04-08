@@ -69,7 +69,7 @@ function broadcastState() {
 
 async function getRuntimeSettings() {
   const [syncStored, localStored] = await Promise.all([
-    chrome.storage.sync.get(['voiceEngine', 'speechMode', 'scoringMode', 'absoluteScaleMaxDays', 'maxTicketsToSpeak', 'tagsToIgnore']),
+    chrome.storage.sync.get(['voiceEngine', 'speechMode', 'scoringMode', 'absoluteScaleMaxDays', 'maxTicketsToSpeak', 'tagsToIgnore', 'statesToIgnore', 'typesToIgnore']),
     chrome.storage.local.get(['adoPat', 'elevenLabsApiKey', 'openAiApiKey'])
   ]);
   const stored = { ...syncStored, ...localStored };
@@ -98,6 +98,8 @@ async function getRuntimeSettings() {
   const openAiApiKey = (stored.openAiApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
   const speechMode = stored.speechMode === 'ai' ? 'ai' : 'templates';
   const tagsToIgnore = (stored.tagsToIgnore || '').trim();
+  const statesToIgnore = (stored.statesToIgnore || '').trim();
+  const typesToIgnore = (stored.typesToIgnore || '').trim();
 
   return {
     adoPat,
@@ -108,7 +110,9 @@ async function getRuntimeSettings() {
     scoringMode,
     absoluteScaleMaxDays,
     maxTicketsToSpeak,
-    tagsToIgnore
+    tagsToIgnore,
+    statesToIgnore,
+    typesToIgnore
   };
 }
 
@@ -1129,6 +1133,26 @@ function filterItemsByTags(items, tagsToIgnore) {
   });
 }
 
+function filterItemsByStates(items, statesToIgnore) {
+  if (!statesToIgnore || !statesToIgnore.trim()) return items;
+  const ignored = statesToIgnore.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!ignored.length) return items;
+  return items.filter(item => {
+    const state = (item.fields['System.State'] || '').toLowerCase();
+    return !ignored.includes(state);
+  });
+}
+
+function filterItemsByTypes(items, typesToIgnore) {
+  if (!typesToIgnore || !typesToIgnore.trim()) return items;
+  const ignored = typesToIgnore.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!ignored.length) return items;
+  return items.filter(item => {
+    const type = (item.fields['System.WorkItemType'] || '').toLowerCase();
+    return !ignored.includes(type);
+  });
+}
+
 async function loadChatterBoard({ tabId, url }) {
   if (runState.isQueueLoaded) {
     throw new Error('Queue already loaded. Clear first.');
@@ -1192,13 +1216,19 @@ async function loadChatterBoard({ tabId, url }) {
       ids
     });
 
-    // Filter out items with tags to ignore
-    const filteredItems = filterItemsByTags(items, settings.tagsToIgnore);
+    // Filter out items with tags, states, or types to ignore
+    const filteredItems = filterItemsByTypes(
+      filterItemsByStates(
+        filterItemsByTags(items, settings.tagsToIgnore),
+        settings.statesToIgnore
+      ),
+      settings.typesToIgnore
+    );
 
     if (!filteredItems.length) {
       setRunState({
         isQueueLoaded: false,
-        statusMessage: 'All visible work items were filtered out by tag exclusions.'
+        statusMessage: 'All visible work items were filtered out by exclusion settings.'
       });
       await speak('All work items were filtered out.');
       return { ok: true, count: 0 };
