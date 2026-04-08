@@ -20,7 +20,7 @@ const DEFAULT_MAX_TICKETS_TO_SPEAK = 5;
 const DEFAULT_SCORING_MODE = 'relative';
 const DEFAULT_ABSOLUTE_SCALE_MAX_DAYS = 30;
 const WORK_ITEM_BATCH_SIZE = 200;
-const WORK_ITEM_REVISIONS_TOP = 500;
+const WORK_ITEM_REVISIONS_TOP = 200;
 
 const sentencesCache = {
   lastUpdated: null,
@@ -685,7 +685,8 @@ async function buildTimeInColumnElapsedMap({ org, project, adoPat, items }) {
 
       elapsedMap.set(item.id, elapsedMs);
     } catch (error) {
-      console.warn(`Could not get time-in-column for work item ${item.id}`, error);
+      console.error(`Could not get time-in-column for work item ${item.id}`, error);
+      setRunState({ statusMessage: `Warning: column history failed for #${item.id} — ${error.message}` });
       elapsedMap.set(item.id, null);
     }
   }
