@@ -21,7 +21,7 @@ const DEFAULT_MAX_TICKETS_TO_SPEAK = 5;
 const DEFAULT_SCORING_MODE = 'relative';
 const DEFAULT_ABSOLUTE_SCALE_MAX_DAYS = 30;
 const WORK_ITEM_BATCH_SIZE = 200;
-const WORK_ITEM_REVISIONS_TOP = 200;
+const WORK_ITEM_REVISIONS_TOP = 500;
 
 const sentencesCache = {
   lastUpdated: null,
