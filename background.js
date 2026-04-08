@@ -29,6 +29,9 @@ const sentencesCache = {
   timeInProgress: null
 };
 
+// Pre-fetched ElevenLabs audio: ticketId (string) → Promise<base64 string | null>
+const elevenLabsAudioCache = new Map();
+
 const runState = {
   isQueueLoaded: false,
   currentTabId: null,
@@ -119,43 +122,86 @@ function clampNumber(value, min, max, fallback) {
   return Math.max(min, Math.min(max, Math.round(parsed)));
 }
 
-async function speakWithElevenLabs(text, apiKey, voiceId) {
+function prefetchElevenLabsAudio(ticketId, speechText, apiKey) {
+  const key = String(ticketId);
+  if (elevenLabsAudioCache.has(key)) return;
+  const voiceId = pickVoiceForTicket(ticketId);
+  const promise = fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'audio/mpeg',
+      'Content-Type': 'application/json',
+      'xi-api-key': apiKey
+    },
+    body: JSON.stringify({
+      text: speechText,
+      model_id: 'eleven_multilingual_v2',
+      voice_settings: { stability: 0.5, similarity_boost: 0.5 }
+    })
+  })
+  .then(r => r.ok ? r.arrayBuffer().then(arrayBufferToBase64) : null)
+  .catch(() => null);
+  elevenLabsAudioCache.set(key, promise);
+}
+
+async function prefetchEntryAudio(entry, apiKey) {
+  const id = entry.item.id;
+  if (elevenLabsAudioCache.has(String(id))) return;
+  const title = entry.item.fields['System.Title'] || 'Untitled work item';
+  const signals = getAvailableSignalsSorted(entry);
+  const text = entry.speechText
+    || await buildSpeechFromSignals(signals, title, entry.frustrationScore);
+  prefetchElevenLabsAudio(id, text, apiKey);
+}
+
+async function speakWithElevenLabs(text, apiKey, voiceId, ticketId) {
   const resolvedVoiceId = voiceId || 'JBFqnCBsd6RMkjVDRZzb';
+  const cacheKey = ticketId != null ? String(ticketId) : null;
 
   try {
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
-      method: 'POST',
-      headers: {
-        'Accept': 'audio/mpeg',
-        'Content-Type': 'application/json',
-        'xi-api-key': apiKey
-      },
-      body: JSON.stringify({
-        text: text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.5
-        }
-      })
-    });
+    let base64Audio = null;
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`ElevenLabs TTS API failed: HTTP ${response.status} ${response.statusText} — ${errorText}`);
-      try {
-        const errorJson = JSON.parse(errorText);
-        if (errorJson?.detail?.code === 'payment_required') {
-          return 'payment_required';
-        }
-      } catch (_) { /* not JSON, ignore */ }
-      return false;
+    // Use pre-fetched audio if available
+    if (cacheKey && elevenLabsAudioCache.has(cacheKey)) {
+      base64Audio = await elevenLabsAudioCache.get(cacheKey);
+      elevenLabsAudioCache.delete(cacheKey);
+    }
+
+    if (!base64Audio) {
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': apiKey
+        },
+        body: JSON.stringify({
+          text: text,
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.5
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`ElevenLabs TTS API failed: HTTP ${response.status} ${response.statusText} — ${errorText}`);
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson?.detail?.code === 'payment_required') {
+            return 'payment_required';
+          }
+        } catch (_) { /* not JSON, ignore */ }
+        return false;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      base64Audio = arrayBufferToBase64(arrayBuffer);
     }
 
     console.log('ElevenLabs: Audio received, sending to offscreen for playback...');
-    const arrayBuffer = await response.arrayBuffer();
-    const base64Audio = arrayBufferToBase64(arrayBuffer);
-
     return await playAudioViaOffscreen(base64Audio);
   } catch (error) {
     console.error('ElevenLabs TTS error:', error);
@@ -242,11 +288,19 @@ function pickVoiceForTicket(ticketId) {
 async function speak(text, ticketId) {
   const settings = await getRuntimeSettings();
 
+  // Pre-fetch audio for the next ticket in background while this one plays
+  if (settings.voiceEngine === 'ai' && settings.elevenLabsApiKey) {
+    const nextEntry = runState.queue[runState.currentQueueIndex + 1];
+    if (nextEntry) {
+      void prefetchEntryAudio(nextEntry, settings.elevenLabsApiKey);
+    }
+  }
+
   // Try ElevenLabs if AI voice engine is selected and an API key is available
   if (settings.voiceEngine === 'ai' && settings.elevenLabsApiKey) {
     // If no manual voice override, pick a free premade voice based on ticket ID
     const voiceId = pickVoiceForTicket(ticketId);
-    const elevenLabsResult = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId);
+    const elevenLabsResult = await speakWithElevenLabs(text, settings.elevenLabsApiKey, voiceId, ticketId);
     
     if (elevenLabsResult === true) {
       return;
@@ -391,6 +445,7 @@ async function stopCurrentSpeech() {
 }
 
 function stopChatterBoard() {
+  elevenLabsAudioCache.clear();
   stopCurrentSpeech();
   clearCurrentHighlightIfAny();
   setRunState({
@@ -992,6 +1047,17 @@ async function navigateToTicket(index) {
 
   const speechText = entry.speechText
     || await buildSpeechFromSignals(voiceSignals, title, entry.frustrationScore);
+
+  // Ensure offscreen document exists before speak() needs it (eliminates first-ticket cold start)
+  const existingContexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+  if (!existingContexts.length) {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['AUDIO_PLAYBACK'],
+      justification: 'Playing ElevenLabs TTS audio'
+    });
+  }
+
   await speak(speechText, id);
 }
 
@@ -1192,6 +1258,11 @@ async function loadChatterBoard({ tabId, url }) {
       queue: selected,
       currentQueueIndex: -1
     });
+
+    // Pre-fetch ElevenLabs audio for the first ticket to reduce startup delay
+    if (settings.voiceEngine === 'ai' && settings.elevenLabsApiKey && selected.length > 0) {
+      void prefetchEntryAudio(selected[0], settings.elevenLabsApiKey);
+    }
 
     await navigateToTicket(0);
     
