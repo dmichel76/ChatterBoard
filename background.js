@@ -13,7 +13,6 @@ const FREE_ELEVENLABS_VOICES = [
   'pFZP5JQG7iQjIQuC4Bku', // Lily
   'bIHbv24MWmeRgasZH58o', // Will
   '9BWtsMINqrJLrRacOk9x', // Aria
-  'CwhRBWXHgEUDjpjDnaoR', // Roger
   'FGY2WhTYpPnrIDTdsKH5', // Laura
 ];
 
@@ -197,6 +196,9 @@ async function speakWithElevenLabs(text, apiKey, voiceId, ticketId) {
           if (errorJson?.detail?.code === 'payment_required') {
             return 'payment_required';
           }
+          if (errorJson?.detail?.code === 'voice_not_found') {
+            return 'voice_not_found';
+          }
         } catch (_) { /* not JSON, ignore */ }
         return false;
       }
@@ -312,6 +314,8 @@ async function speak(text, ticketId) {
 
     if (elevenLabsResult === 'payment_required') {
       setRunState({ statusMessage: 'ElevenLabs: free plan cannot use library voices via the API. Falling back to Chrome TTS.' });
+    } else if (elevenLabsResult === 'voice_not_found') {
+      setRunState({ statusMessage: 'ElevenLabs: voice ID not found — it may have been removed. Falling back to Chrome TTS.' });
     } else if (!speak.notifiedElevenLabsFailure) {
       console.warn('ElevenLabs TTS failed, falling back to Chrome TTS');
       speak.notifiedElevenLabsFailure = true;
